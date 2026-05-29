@@ -1,56 +1,45 @@
-# 🛡️ SecOps Core
+# 🛡️ SecOps Core | ITAM & Network Security Dashboard
 
-An enterprise-grade, multi-protocol network asset discovery and vulnerability management engine. Built with Python and FastAPI, featuring a zero-latency UI for real-time network topology tracking.
+SecOps Core is a lightweight, self-hosted IT Asset Management (ITAM) and Intrusion Prevention System (IPS). It combines passive network telemetry, active Nmap fingerprinting, and real-time vulnerability cross-referencing into a single, interactive dashboard.
 
 ## ✨ Features
-* **Multi-Protocol Discovery:** Utilizes ARP sweeps, ICMP pings, and SSDP multicast probes to wake up deep-sleep IoT devices, Smart TVs, and mobile endpoints.
-* **3-Tier Asset Identity:** Scrapes internal HTTP `<title>` tags, mDNS `TXT` payloads, and DHCP/NetBIOS hostnames to accurately identify hardware.
-* **Nmap Deep Fingerprinting:** Asynchronous, background OS and service fingerprinting without blocking the UI.
-* **CISA KEV Integration:** Automatically cross-references discovered open ports against the official US Government Known Exploited Vulnerabilities ledger.
-* **Container Ready:** Dynamic environment variable detection natively supports Docker and Kubernetes deployments.
 
-## ⚙️ Prerequisites
-Because this tool performs raw packet manipulation and deep network interrogation, specific system prerequisites are required:
+* **Passive Network Sniffing:** Silently monitors DHCP and mDNS traffic to catalog hidden devices (Smart TVs, IoT hardware, consoles) without triggering active alarms.
+* **Interactive Topology Map:** A physics-based network graph mapping your entire subnet ecosystem.
+* **Active Vulnerability Auditing:** Cross-references open ports against the official CISA Known Exploited Vulnerabilities (KEV) catalog.
+* **Intrusion Prevention (ARP Quarantine):** Actively isolates rogue assets using localized ARP poisoning.
+* **Webhooks:** Pushes real-time alerts to Discord/Slack when unauthorized devices connect to the network.
 
-1. **Python 3.9+**
-2. **Nmap Binary:** The host machine must have [Nmap](https://nmap.org/download.html) installed and added to the system PATH.
-3. **Execution Privileges:** * **Windows:** Must be run as Administrator. You must also install [Npcap](https://npcap.com/) (installed with Wireshark/Nmap).
-    * **Linux/macOS:** Must be run with `sudo` (requires `root` or `CAP_NET_RAW` / `CAP_NET_ADMIN` capabilities).
+## 🚀 Deployment (Docker)
 
-## 🚀 Quick Start
+Because SecOps Core requires raw network socket access (for packet sniffing and ARP spoofing) and OS-level tools like Nmap, Docker is the recommended deployment method.
 
 1. **Clone the repository:**
-
-    git clone [https://github.com/YOUR_USERNAME/secops-core.git](https://github.com/YOUR_USERNAME/secops-core.git)
-   cd secops-core
    
-3. Install Python dependencies:
-    Bash
+   git clone [https://github.com/YOUR_USERNAME/secops-core.git](https://github.com/YOUR_USERNAME/secops-core.git)
+   cd secops-core
 
-    pip install -r requirements.txt
+2. Configure your Subnet:
+    Open docker-compose.yml and update the TARGET_SUBNET environment variable to match your local network (e.g., 192.168.1.0/24).
 
-    Run the Engine:
+3. Deploy the stack:
 
-        Linux/Mac: sudo python3 server.py
+   docker-compose up -d --build
 
-        Windows: Open Admin PowerShell and run: python server.py
+4. Access the Dashboard:
+    Open your browser and navigate to http://localhost:13000.
 
-    Access the Dashboard:
-    Open your browser and navigate to http://localhost:13000
+⚠️ Disclaimer & Ethical Use
 
-🐳 Docker Deployment
+This tool includes active network disruption capabilities (ARP Poisoning).
+The "Toggle Isolation" feature executes a localized Denial of Service attack against the target MAC address.
 
-To run as a container, ensure you bind to the host network and provide raw packet sniffing privileges:
-Bash
+    Do NOT run this software on corporate, public, or educational networks without explicit written authorization from the network owner.
 
-docker run -d \
-  --name secops-core \
-  --network host \
-  --privileged \
-  -e DB_PATH=/data/network_state.db \
-  -v /your/local/folder:/data \
-  your-image-name:latest
+    This software is provided for educational, homelab, and authorized defensive operations only. The authors are not responsible for network outages or damages caused by misuse.
 
-⚠️ Disclaimer
+🛠️ Tech Stack
 
-This tool is for educational and authorized internal network auditing only. Do not deploy this scanner on networks where you do not have explicit authorization to perform active reconnaissance.
+    Backend: Python 3.10, FastAPI, Scapy, python-nmap, SQLite
+
+    Frontend: HTML5, CSS3, Vanilla JavaScript, Vis.js (Topology Graph)

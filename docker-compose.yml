@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  secops-core:
+    build: .
+    container_name: secops-core
+    restart: unless-stopped
+    # Host network mode is REQUIRED for Scapy passive sniffing and ARP poisoning
+    network_mode: "host"
+    # Elevated privileges required to craft raw packets
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - HOST=0.0.0.0
+      - PORT=13000
+      - TARGET_SUBNET=192.168.1.0/24
+      - AUTOSCAN_INTERVAL=900
+      # - WEBHOOK_URL=https://discord.com/api/webhooks/your_webhook_here
+      - DB_PATH=/app/data/network_state.db
+    volumes:
+      # Mount a local directory to persist the database across container restarts
+      - ./data:/app/data

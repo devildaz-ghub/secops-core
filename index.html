@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SecOps Core | Network Security Matrix</title>
+    <title>SecOps Core | ITAM Dashboard</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
+    
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/standalone/umd/vis-network.min.js"></script>
+
     <style>
         :root {
             --bg-main: #f8fafc; --surface-card: #ffffff; --text-primary: #0f172a; --text-secondary: #475569;
@@ -20,8 +20,8 @@
         *, *::before, *::after { box-sizing: border-box; }
 
         .app-container { display: flex; width: 100%; height: 100vh; }
-        .sidebar-left { width: 280px; flex-shrink: 0; background: #1e293b; color: #f8fafc; padding: 1.5rem; border-right: 1px solid rgba(255,255,255,0.1); overflow-y: auto; }
-        .main-canvas { flex: 1; padding: 1.5rem; overflow-y: auto; position: relative; }
+        .sidebar-left { width: 280px; flex-shrink: 0; background: #1e293b; color: #f8fafc; padding: 1.5rem; border-right: 1px solid rgba(255,255,255,0.1); overflow-y: auto; display: flex; flex-direction: column; }
+        .main-canvas { flex: 1; padding: 1.5rem; overflow-y: auto; position: relative; display: flex; flex-direction: column;}
         .sidebar-right { width: 440px; flex-shrink: 0; background: var(--surface-card); padding: 1.5rem; border-left: 1px solid var(--border-flat); overflow-y: auto; box-shadow: -4px 0 15px rgba(0,0,0,0.03); z-index: 10; display: none; flex-direction: column; }
 
         h2, h3, h4 { margin: 0 0 0.5rem 0; font-weight: 600; letter-spacing: -0.02em; }
@@ -54,6 +54,13 @@
         .btn-success:hover { background: #059669; }
         .btn-danger { background: var(--flat-danger); color: #fff; }
         .btn-danger:hover { background: #dc2626; }
+
+        .tab-menu { display: flex; gap: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 1.5rem; padding-bottom: 0.5rem;}
+        .tab-btn { background: transparent; color: #94a3b8; font-weight: bold; font-size: 0.85rem; padding: 0; border-radius: 0; border-bottom: 2px solid transparent; transition: color 0.2s;}
+        .tab-btn:hover { background: transparent; color: #f8fafc;}
+        .tab-btn.active { color: #38bdf8; border-bottom: 2px solid #38bdf8; }
+        .tab-content { display: none; flex: 1; flex-direction: column; }
+        .tab-content.active { display: flex; }
 
         #device-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; padding-bottom: 24rem; }
 
@@ -118,7 +125,12 @@
     <div class="app-container">
             
         <div class="sidebar-left">
-            <h3 style="color:#ffffff; margin-bottom:1.5rem; display:flex; align-items:center; gap:8px;">🛡️ SecOps Core</h3>
+            <h3 style="color:#ffffff; display:flex; align-items:center; gap:8px;">🛡️ SecOps Core</h3>
+            
+            <div class="tab-menu">
+                <button class="tab-btn active" onclick="switchTab('dashboard')">Matrix</button>
+                <button class="tab-btn" onclick="switchTab('topology')">Map</button>
+            </div>
             
             <span class="section-title">Telemetry Counters</span>
             
@@ -132,7 +144,7 @@
                 <div class="metric-lbl">Vulnerable Nodes</div>
             </div>
 
-            <div style="margin-top:2rem;">
+            <div style="margin-top:auto;">
                 <span class="section-title">Subnet Control</span>
                 
                 <label for="subnet-input" style="font-size:0.7rem; color:var(--text-muted);">Target IP Range</label>
@@ -140,11 +152,9 @@
                 
                 <label for="auto-scan-interval" style="font-size:0.7rem; color:var(--text-muted);">Auto-Scan Schedule</label>
                 <select id="auto-scan-interval" onchange="updateScanSchedule()" style="width:100%; background:rgba(255,255,255,0.1); border:none; color:white; padding:0.5rem 0.75rem; border-radius:6px; margin-bottom:1rem; outline:none;">
-                    <option value="0" style="color: black;">Manual Only (Disabled)</option>
-                    <option value="5" style="color: black;">Every 5 Minutes</option>
-                    <option value="10" style="color: black;">Every 10 Minutes</option>
-                    <option value="15" selected style="color: black;">Every 15 Minutes</option>
-                    <option value="30" style="color: black;">Every 30 Minutes</option>
+                    <option value="0" style="color: black;">Manual Only</option>
+                    <option value="5" style="color: black;">Every 5 Mins</option>
+                    <option value="15" selected style="color: black;">Every 15 Mins</option>
                     <option value="60" style="color: black;">Every 1 Hour</option>
                 </select>
 
@@ -168,24 +178,43 @@
                 </div>
 
                 <div style="display: flex; gap: 1.5rem; text-align: right;">
-                    <span>External data sources | <strong>Intel Sync Active:</strong> IEEE MAC OUI, CISA KEV, Local DHCP, Nmap Fingerprinting</span>
+                    <span>External data sources | <strong>Intel Sync Active:</strong> DNS, CISA KEV, DHCP, Nmap</span>
                     <span id="sync-time">Last Refresh: Loading...</span>
                 </div>
             </div>
 
-            <div class="flat-navbar">
-                <div style="display: flex; gap: 0.5rem;">
-                    <select id="primary-scan" onchange="loadPrimaryScan()" style="min-width:200px;"></select>
-                    <select id="compare-scan" onchange="calculateNetworkDiff()" style="min-width:200px;"></select>
+            <div id="tab-dashboard" class="tab-content active">
+                <div class="flat-navbar">
+                    <div style="display: flex; gap: 0.5rem;">
+                        <select id="primary-scan" onchange="loadPrimaryScan()" style="min-width:200px;"></select>
+                        <select id="compare-scan" onchange="calculateNetworkDiff()" style="min-width:200px;"></select>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <select id="sort-select" onchange="calculateNetworkDiff()" style="min-width:160px;"></select>
+                        <button class="btn-dark" onclick="exportCurrentScanMetrics()">Export Audit Log</button>
+                    </div>
                 </div>
-                <div style="display: flex; gap: 0.5rem;">
-                    <select id="sort-select" onchange="calculateNetworkDiff()" style="min-width:160px;"></select>
-                    <button class="btn-dark" onclick="exportCurrentScanMetrics()">Export Audit Log</button>
-                </div>
+
+                <span class="section-title">Discovered Infrastructure Target Matrix</span>
+                <div id="device-list"></div>
             </div>
 
-            <span class="section-title">Discovered Infrastructure Target Matrix</span>
-            <div id="device-list"></div>
+            <div id="tab-topology" class="tab-content">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <span class="section-title" style="margin: 0;">Interactive Network Graph</span>
+                    <button class="btn-dark" onclick="drawTopology()" style="font-size:0.75rem;">🔄 Refresh Graph</button>
+                </div>
+                
+                <div style="position: relative; width: 100%; min-height: 600px; flex: 1; border: 1px solid var(--border-flat); border-radius: 8px; background: #ffffff; box-shadow: inset 0 0 10px rgba(0,0,0,0.02); overflow: hidden;">
+                    <div id="topology-network" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0;"></div>
+                    <div id="topology-loading" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); z-index: 10; justify-content: center; align-items: center; flex-direction: column;">
+                        <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 12px; font-size: 0.9rem;" id="topology-loading-text">Fetching Telemetry...</div>
+                        <div style="width: 250px; height: 6px; background: var(--border-flat); border-radius: 4px; overflow: hidden;">
+                            <div id="topology-loading-bar" style="height: 100%; width: 0%; background: var(--brand-primary); transition: width 0.1s ease-out;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <div class="alerts-container" id="alerts-container">
                 <div class="alerts-header">
@@ -220,7 +249,28 @@
                 
                 <div id="diag-hardware-specs" style="font-family:monospace; font-size:0.75rem; color:var(--text-secondary); margin-top:-1rem;"></div>
 
+                <div style="display: flex; gap: 0.5rem; margin-top: -0.5rem;">
+                    <button id="btn-wol" onclick="triggerAction('wake')" class="btn-info" style="flex:1; background: var(--flat-info); color:#fff; font-size:0.75rem;">⚡ Wake-on-LAN</button>
+                    <button id="btn-isolate" onclick="triggerAction('quarantine')" class="btn-danger" style="flex:1; font-size:0.75rem;">🚫 Toggle Isolation</button>
+                </div>
+
                 <div id="vuln-report-section"></div>
+
+                <div id="advanced-telemetry-section" style="background:var(--bg-main); border:1px solid var(--border-flat); border-radius:8px; padding:1rem; margin-top:0.5rem;">
+                    <span class="section-title" style="margin-bottom:0.75rem;">Passive Telemetry Signatures</span>
+                    <div class="detail-row" style="margin-bottom: 0.4rem;">
+                        <span class="detail-label">DHCP PRL</span> 
+                        <span class="detail-val" id="diag-dhcp" style="font-size:0.7rem; word-break: break-all; text-align: right; max-width: 60%; color:var(--text-primary);"></span>
+                    </div>
+                    <div class="detail-row" style="margin-bottom: 0.4rem;">
+                        <span class="detail-label">mDNS TXT</span> 
+                        <span class="detail-val" id="diag-mdns" style="font-size:0.7rem; word-break: break-all; text-align: right; max-width: 60%; color:var(--text-primary);"></span>
+                    </div>
+                    <div class="detail-row" style="flex-direction: column; gap: 4px; margin-top: 0.5rem;">
+                        <span class="detail-label">Intercepted DNS Queries</span> 
+                        <div id="diag-dns" style="font-size:0.7rem; color: var(--text-secondary); font-family: monospace; background: #ffffff; padding: 6px; border-radius: 4px; border: 1px solid var(--border-flat); max-height: 80px; overflow-y: auto;"></div>
+                    </div>
+                </div>
 
                 <div style="background:var(--bg-main); border:1px solid var(--border-flat); border-radius:8px; padding:1rem; margin-top:auto;">
                     <span class="section-title" style="margin-bottom:0.75rem;">Modify Asset Profile</span>
@@ -262,6 +312,7 @@
         let baseDevices = [], compareDevices = [], selectedMac = null;
         let activeComputedDisplayList = [], currentFilter = 'all';
         let localAlerts = [], currentAlertIndex = 0, isHiddenAlerts = false, isServerPaused = false;
+        let networkGraph = null;
 
         window.onload = async () => { 
             const now = new Date();
@@ -279,6 +330,122 @@
             setInterval(pollHeartbeat, 4000); 
             updateScanSchedule(); 
         };
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            document.querySelector(`.tab-btn[onclick="switchTab('${tabName}')"]`).classList.add('active');
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+
+            if(tabName === 'topology') {
+                setTimeout(() => { drawTopology(); }, 50);
+            }
+        }
+
+        async function drawTopology() {
+            const loadingOverlay = document.getElementById('topology-loading');
+            const loadingBar = document.getElementById('topology-loading-bar');
+            const loadingText = document.getElementById('topology-loading-text');
+
+            if (loadingOverlay) loadingOverlay.style.display = 'flex';
+            if (loadingBar) loadingBar.style.width = '10%';
+            if (loadingText) loadingText.innerText = 'Fetching Telemetry...';
+
+            try {
+                const res = await fetch('/api/topology');
+                const data = await res.json();
+                
+                if (loadingBar) loadingBar.style.width = '30%';
+                if (loadingText) loadingText.innerText = 'Initializing Physics Engine...';
+
+                const container = document.getElementById('topology-network');
+                
+                const graphData = {
+                    nodes: new vis.DataSet(data.nodes),
+                    edges: new vis.DataSet(data.edges)
+                };
+                
+                const options = {
+                    nodes: { 
+                        shape: 'dot', 
+                        size: 16, 
+                        font: { 
+                            size: 12, 
+                            color: '#0f172a', 
+                            face: 'system-ui',
+                            strokeWidth: 4,
+                            strokeColor: '#ffffff'
+                        } 
+                    },
+                    edges: { color: '#cbd5e1', smooth: { type: 'continuous' } },
+                    groups: {
+                        gateway: { color: { background: '#ef4444', border: '#b91c1c' }, font: {color: 'black'} },
+                        device: { color: { background: '#0284c7', border: '#0369a1' } }
+                    },
+                    physics: { 
+                        forceAtlas2Based: { 
+                            gravitationalConstant: -120, 
+                            centralGravity: 0.005, 
+                            springLength: 350,           
+                            springConstant: 0.05,
+                            avoidOverlap: 0.5
+                        }, 
+                        maxVelocity: 50, 
+                        solver: 'forceAtlas2Based', 
+                        timestep: 0.35, 
+                        stabilization: { iterations: 150 } 
+                    }
+                };
+                
+                if (networkGraph) networkGraph.destroy();
+                networkGraph = new vis.Network(container, graphData, options);
+
+                networkGraph.setSize('100%', '100%');
+                networkGraph.redraw();
+
+                networkGraph.on("stabilizationProgress", function(params) {
+                    const widthFactor = params.iterations / params.total;
+                    const percentage = 30 + Math.round(widthFactor * 70);
+                    if (loadingBar) loadingBar.style.width = percentage + '%';
+                    if (loadingText) loadingText.innerText = `Calculating Layout (${Math.round(widthFactor * 100)}%)...`;
+                });
+
+                networkGraph.once("stabilizationIterationsDone", function() {
+                    if (loadingBar) loadingBar.style.width = '100%';
+                    if (loadingText) loadingText.innerText = 'Topology Rendered!';
+                    networkGraph.fit(); 
+                    setTimeout(() => { if (loadingOverlay) loadingOverlay.style.display = 'none'; }, 400); 
+                });
+
+                setTimeout(() => {
+                    if (loadingOverlay && loadingOverlay.style.display !== 'none') {
+                        loadingOverlay.style.display = 'none';
+                        networkGraph.fit();
+                    }
+                }, 3000);
+
+            } catch(e) { 
+                console.error("Topology mapping failed.", e); 
+                if (loadingText) loadingText.innerText = 'Failed to map topology.';
+                if (loadingBar) loadingBar.style.background = 'var(--flat-danger)';
+                setTimeout(() => { if (loadingOverlay) loadingOverlay.style.display = 'none'; }, 2000);
+            }
+        }
+
+        async function triggerAction(actionType) {
+            if (!selectedMac) return;
+            const btn = actionType === 'wake' ? document.getElementById('btn-wol') : document.getElementById('btn-isolate');
+            const originalText = btn.innerText;
+            btn.innerText = "Executing..."; btn.disabled = true;
+            try {
+                const res = await fetch(`/api/device/${encodeURIComponent(selectedMac)}/${actionType}`, { method: 'POST' });
+                const data = await res.json();
+                if(res.ok) alert(data.message || `Action '${actionType}' triggered successfully.`);
+                else alert(`Failed: ${data.detail || "Unknown error"}`);
+            } catch(e) { alert("Failed to execute action."); }
+            finally { btn.innerText = originalText; btn.disabled = false; }
+        }
 
         function setFilter(type) {
             currentFilter = type;
@@ -537,9 +704,6 @@
             renderDevices(computedDisplayList);
         }
 
-        // =====================================================================
-        // UPDATED: HOSTNAME FALLBACK LOGIC
-        // =====================================================================
         function renderDevices(displayList) {
             const list = document.getElementById('device-list');
             let filteredList = currentFilter === 'vulnerable' ? displayList.filter(d => d.vulnerabilities && d.vulnerabilities.length > 0) : displayList;
@@ -564,10 +728,8 @@
 
                 let isSelected = selectedMac === device.mac ? ' selected' : '';
                 
-                // >>> NEW HOSTNAME FALLBACK LOGIC HERE <<<
                 let displayHostname = device.custom_name || device.hostname;
                 if (!displayHostname) {
-                    // Fall back to Vendor, or if Vendor is hidden/randomized, fall back to IP Address
                     displayHostname = (device.vendor && !device.vendor.includes("Unknown") && !device.vendor.includes("Private")) 
                         ? device.vendor 
                         : device.ip.split(',')[0];
@@ -591,6 +753,7 @@
                         <div class="card-details">
                             <div class="detail-row"><span class="detail-label">IP Address</span> <span class="detail-val">${ipText}</span></div>
                             <div class="detail-row"><span class="detail-label">MAC Address</span> <span class="detail-val">${device.mac}</span></div>
+                            <div class="detail-row"><span class="detail-label">Last Active</span> <span class="detail-val" style="color: var(--text-secondary); font-weight: normal;">${device.last_seen || 'Unknown'}</span></div>
                         </div>
                         <div class="card-footer"><span class="badge-flat">${device.status.toUpperCase()}</span>${threatBadge}</div>
                     </div>`;
@@ -608,7 +771,6 @@
             document.getElementById('sidebar-right').style.display = "flex";
             document.body.classList.add('sidebar-open');
             
-            // Reusing the same fallback logic for the sidebar title
             let displayHostname = device.custom_name || device.hostname;
             if (!displayHostname) {
                 displayHostname = (device.vendor && !device.vendor.includes("Unknown") && !device.vendor.includes("Private")) 
@@ -622,6 +784,17 @@
             document.getElementById('edit-name').value = device.custom_name || "";
             document.getElementById('edit-tags').value = device.tags || "";
             document.getElementById('edit-icon').value = device.icon_override || "";
+            
+            // Populate Deep-Dive Telemetry
+            document.getElementById('diag-dhcp').innerText = device.dhcp_prl || 'No DHCP data captured';
+            document.getElementById('diag-mdns').innerText = device.mdns_txt || 'No mDNS records found';
+            
+            const dnsDiv = document.getElementById('diag-dns');
+            if (device.dns_history && device.dns_history.length > 0) {
+                dnsDiv.innerHTML = device.dns_history.join('<br>');
+            } else {
+                dnsDiv.innerText = 'No queries intercepted';
+            }
             
             const reportDiv = document.getElementById('vuln-report-section');
             reportDiv.innerHTML = ""; 

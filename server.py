@@ -3,10 +3,11 @@ import sys
 import asyncio
 import time
 import re
+import socket
 from datetime import datetime
 from mac_vendor_lookup import AsyncMacLookup
 from fastapi.responses import FileResponse
-from fastapi import FastAPI, Query, Response
+from fastapi import FastAPI, Query, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import scapy.all as scapy
@@ -27,6 +28,7 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "13000"))
 TARGET_SUBNET = os.getenv("TARGET_SUBNET", "192.168.1.0/24")
 AUTOSCAN_INTERVAL = int(os.getenv("AUTOSCAN_INTERVAL", "900")) 
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "") # Add your Discord/Slack Webhook URL here
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.getenv("DB_PATH", os.path.join(BASE_DIR, "network_state.db"))
@@ -79,6 +81,7 @@ FINGERBANK_CACHE = {}
 DEVICE_TELEMETRY = {}
 NMAP_CACHE = {}
 ALERTED_MACS = set() 
+ACTIVE_QUARANTINES = set() 
 sniffer_handle = None
 
 SYSTEM_STATE = {"sniffer_paused": False, "intel_sync_complete": False}
@@ -90,7 +93,14 @@ LOCAL_OUI_FALLBACK = {
     "00:05:69": "VMware Inc.", "00:0C:29": "VMware Inc.", "52:54:00": "QEMU/KVM Virtual NIC"
 }
 
-# --- Background Services ---
+def trigger_webhook(title: str, message: str, color: int = 16711680):
+    if not WEBHOOK_URL: return
+    try:
+        payload = {"embeds": [{"title": title, "description": message, "color": color}]}
+        req = urllib.request.Request(WEBHOOK_URL, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+        urllib.request.urlopen(req, timeout=3)
+    except Exception as e: print(f"[⚠️ WEBHOOK] Failed to send: {e}")
+
 async def background_nmap_sync():
     global NMAP_CACHE, TARGET_SUBNET
     while True:
@@ -99,7 +109,6 @@ async def background_nmap_sync():
                 nm = nmap.PortScanner()
                 nm.scan(hosts=TARGET_SUBNET, arguments='-O -sV -F -T4 --host-timeout 30s')
                 return nm
-
             try:
                 nm_results = await asyncio.to_thread(run_nmap)
                 for ip in nm_results.all_hosts():
@@ -108,24 +117,19 @@ async def background_nmap_sync():
                     best_name = hostnames[0] if hostnames else ""
                     os_match = host_data['osmatch'][0]['name'] if 'osmatch' in host_data and len(host_data['osmatch']) > 0 else ""
                     NMAP_CACHE[ip] = {"nmap_name": best_name, "os": os_match, "vendor_dict": host_data.get('vendor', {})}
-                print(f"[✅ NMAP] Deep scan complete. Cached OS data for {len(NMAP_CACHE)} hosts.")
-            except Exception as e: pass
+            except Exception: pass
         await asyncio.sleep(14400) 
 
 async def background_intel_sync():
     global LOCAL_KEV_CACHE
     try: await mac_checker.update_vendors()
     except Exception: pass
-
     def fetch_cisa():
         req = urllib.request.Request(CISA_KEV_URL, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            return json.loads(response.read().decode()).get("vulnerabilities", [])
+        with urllib.request.urlopen(req, timeout=10) as response: return json.loads(response.read().decode()).get("vulnerabilities", [])
     try: LOCAL_KEV_CACHE = await asyncio.to_thread(fetch_cisa)
     except Exception: pass
-
     SYSTEM_STATE["intel_sync_complete"] = True
-    print("[✅ SYSTEM] Threat intelligence pipeline armed. Audits unlocked.")
 
 async def auto_scan_loop():
     global AUTOSCAN_INTERVAL, TARGET_SUBNET, last_scan_time, last_purge_time, DEVICE_TELEMETRY
@@ -156,7 +160,7 @@ def passive_packet_callback(pkt):
             if src_mac in ["FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00"] or src_mac.startswith("33:33"): return
 
             if src_mac not in DEVICE_TELEMETRY:
-                DEVICE_TELEMETRY[src_mac] = {"dhcp_name": "", "dhcp_prl": "", "mdns_name": "", "mdns_txt": "", "last_seen": 0}
+                DEVICE_TELEMETRY[src_mac] = {"dhcp_name": "", "dhcp_prl": "", "mdns_name": "", "mdns_txt": "", "dns_queries": set(), "last_seen": 0}
             DEVICE_TELEMETRY[src_mac]["last_seen"] = time.time()
 
             if pkt.haslayer(scapy.DHCP):
@@ -165,17 +169,22 @@ def passive_packet_callback(pkt):
                         if opt[0] == 'hostname': DEVICE_TELEMETRY[src_mac]["dhcp_name"] = str(opt[1].decode('utf-8', errors='ignore') if isinstance(opt[1], bytes) else opt[1])
                         elif opt[0] == 'param_req_list': DEVICE_TELEMETRY[src_mac]["dhcp_prl"] = "".join(f"{x:02x}" for x in opt[1]) if isinstance(opt[1], list) else opt[1].hex()
 
-            if pkt.haslayer(scapy.UDP) and pkt[scapy.UDP].dport == 5353 and pkt.haslayer(scapy.DNS):
+            if pkt.haslayer(scapy.UDP) and pkt.haslayer(scapy.DNS):
                 if pkt[scapy.DNS].qd:
                     qname = pkt[scapy.DNS].qd.qname
                     if isinstance(qname, bytes): qname = qname.decode('utf-8', errors='ignore')
-                    if qname.endswith('.local.') and '_' not in qname: DEVICE_TELEMETRY[src_mac]["mdns_name"] = qname.replace('.local.', '')
+                    
+                    if pkt[scapy.UDP].dport == 5353 and qname.endswith('.local.') and '_' not in qname: 
+                        DEVICE_TELEMETRY[src_mac]["mdns_name"] = qname.replace('.local.', '')
+                    elif pkt[scapy.UDP].dport == 53: 
+                        domain = qname.strip('.')
+                        if len(DEVICE_TELEMETRY[src_mac]["dns_queries"]) < 20: 
+                            DEVICE_TELEMETRY[src_mac]["dns_queries"].add(domain)
                 
-                # NEW: mDNS TXT Payload Parsing for Exact Device Models
-                if pkt.haslayer(scapy.DNSRR):
+                if pkt.haslayer(scapy.DNSRR) and pkt[scapy.UDP].dport == 5353:
                     for i in range(pkt[scapy.DNS].ancount):
                         rr = pkt[scapy.DNS].an[i]
-                        if rr.type == 16: # TXT Record
+                        if rr.type == 16: 
                             try:
                                 rdata = b"".join(rr.rdata).decode('utf-8', errors='ignore')
                                 if 'model=' in rdata or 'md=' in rdata: DEVICE_TELEMETRY[src_mac]["mdns_txt"] = rdata
@@ -187,6 +196,7 @@ def passive_packet_callback(pkt):
                 if not c.execute("SELECT mac FROM devices WHERE mac = ?", (src_mac,)).fetchone():
                     with conn: c.execute("INSERT INTO alerts (mac, ip, timestamp, type, created_at) VALUES (?, ?, ?, ?, ?)", (src_mac, src_ip, datetime.now().strftime("%H:%M:%S"), "ROGUE_DEVICE_TRAP", time.time()))
                     ALERTED_MACS.add(src_mac)
+                    trigger_webhook("🚨 Rogue Device Detected", f"A new device with MAC **{src_mac}** and IP **{src_ip}** was detected on the network.")
     except Exception: pass
 
 @asynccontextmanager
@@ -202,22 +212,13 @@ async def lifespan(app: FastAPI):
         with conn:
             c = conn.cursor()
             c.execute("PRAGMA journal_mode=WAL;")
-            c.execute('''CREATE TABLE IF NOT EXISTS devices (mac TEXT PRIMARY KEY, vendor TEXT, custom_name TEXT, tags TEXT, icon_override TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS devices (mac TEXT PRIMARY KEY, vendor TEXT, custom_name TEXT, tags TEXT, icon_override TEXT, hostname TEXT DEFAULT '', device_type TEXT DEFAULT '')''')
             c.execute('''CREATE TABLE IF NOT EXISTS scans (id INTEGER PRIMARY KEY AUTOINCREMENT, scan_id TEXT, mac TEXT, ip TEXT, status TEXT, vulnerabilities TEXT)''')
             c.execute('''CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, mac TEXT, ip TEXT, timestamp TEXT, type TEXT, created_at REAL)''')
-            
-            # SCHEMA MIGRATION: Add new 3-Tier Identity Columns safely
-            try: c.execute("SELECT icon_override FROM devices LIMIT 1")
-            except sqlite3.OperationalError: c.execute("ALTER TABLE devices ADD COLUMN icon_override TEXT")
-            try: c.execute("SELECT hostname FROM devices LIMIT 1")
-            except sqlite3.OperationalError: c.execute("ALTER TABLE devices ADD COLUMN hostname TEXT DEFAULT ''")
-            try: c.execute("SELECT device_type FROM devices LIMIT 1")
-            except sqlite3.OperationalError: c.execute("ALTER TABLE devices ADD COLUMN device_type TEXT DEFAULT ''")
-
             c.execute("SELECT mac FROM alerts")
             ALERTED_MACS.update(row[0] for row in c.fetchall())
 
-    bpf_rule = "udp port 67 or udp port 68 or udp port 5353"
+    bpf_rule = "udp port 67 or udp port 68 or udp port 5353 or udp port 53"
     try:
         sniffer_handle = scapy.AsyncSniffer(prn=passive_packet_callback, store=0, filter=bpf_rule, iface=TARGET_INTERFACE)
         sniffer_handle.start()
@@ -233,24 +234,92 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # =====================================================================
-# 4. API ENDPOINTS & UTILITIES
+# 4. ACTIVE REMEDIATION MODULE (ARP Quaratine & WoL)
+# =====================================================================
+
+async def arp_quarantine_task(target_mac, target_ip):
+    try:
+        gw_ip = scapy.conf.route.route("0.0.0.0")[2]
+        if not gw_ip or gw_ip == "0.0.0.0": return
+        ans, _ = scapy.srp(scapy.Ether(dst="ff:ff:ff:ff:ff:ff")/scapy.ARP(pdst=gw_ip), timeout=2, verbose=False, iface=TARGET_INTERFACE)
+        if not ans: return
+        gw_mac = ans[0][1].hwsrc
+        server_mac = scapy.get_if_hwaddr(TARGET_INTERFACE)
+
+        pkt_to_target = scapy.Ether(dst=target_mac)/scapy.ARP(op=2, pdst=target_ip, psrc=gw_ip, hwdst=target_mac, hwsrc=server_mac)
+        pkt_to_gw = scapy.Ether(dst=gw_mac)/scapy.ARP(op=2, pdst=gw_ip, psrc=target_ip, hwdst=gw_mac, hwsrc=server_mac)
+
+        print(f"[🛡️ IPS] Initiating localized ARP quarantine on {target_mac}")
+        while target_mac in ACTIVE_QUARANTINES:
+            scapy.sendp(pkt_to_target, verbose=False, iface=TARGET_INTERFACE)
+            scapy.sendp(pkt_to_gw, verbose=False, iface=TARGET_INTERFACE)
+            await asyncio.sleep(2.0)
+            
+    except Exception as e:
+        print(f"[⚠️ IPS] Quarantine failed for {target_mac}: {e}")
+        if target_mac in ACTIVE_QUARANTINES: ACTIVE_QUARANTINES.remove(target_mac)
+
+@app.post("/api/device/{mac}/quarantine")
+async def toggle_quarantine(mac: str):
+    mac = mac.upper()
+    if mac in ACTIVE_QUARANTINES:
+        ACTIVE_QUARANTINES.remove(mac)
+        trigger_webhook("🟢 Isolation Lifted", f"Asset **{mac}** has been released from ARP quarantine.", 65280)
+        return {"success": True, "message": "Quarantine lifted. Device connectivity restored."}
+    else:
+        with closing(sqlite3.connect(DB_FILE)) as conn:
+            row = conn.cursor().execute("SELECT ip FROM scans WHERE mac=? ORDER BY id DESC LIMIT 1", (mac,)).fetchone()
+        if not row: return {"success": False, "detail": "Cannot quarantine: No known IP address for this MAC."}
+        
+        target_ip = row[0].split(',')[0].strip()
+        ACTIVE_QUARANTINES.add(mac)
+        asyncio.create_task(arp_quarantine_task(mac, target_ip))
+        trigger_webhook("🛑 Isolation Triggered", f"Asset **{mac}** has been actively blackholed via ARP poisoning.", 16711680)
+        return {"success": True, "message": "ARP Poisoning activated. Device isolated."}
+
+@app.post("/api/device/{mac}/wake")
+def wake_device(mac: str):
+    try:
+        mac_clean = mac.replace(':', '').replace('-', '')
+        if len(mac_clean) != 12: raise ValueError("Invalid MAC Address format")
+        magic_packet = b'\xff' * 6 + bytes.fromhex(mac_clean) * 16
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            s.sendto(magic_packet, ('255.255.255.255', 9))
+        return {"success": True, "message": "Magic Packet UDP Broadcast Sent."}
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+
+# =====================================================================
+# 5. API ENDPOINTS & UTILITIES
 # =====================================================================
 def get_icon_for_vendor(vendor_name, device_type=""):
     v, t = (vendor_name or "").lower(), (device_type or "").lower()
-    if any(x in t for x in ["iphone", "ipad", "pixel", "galaxy", "phone"]): return "📱"
-    if any(x in t for x in ["macbook", "workstation", "laptop", "desktop", "pc", "windows"]): return "💻"
-    if any(x in t for x in ["tv", "roku", "chromecast", "apple tv", "display"]): return "📺"
-    if any(x in t for x in ["playstation", "xbox", "nintendo", "console"]): return "🎮"
-    if any(x in t for x in ["camera", "cam"]): return "📷"
-    if any(x in t for x in ["nas", "server"]): return "🗄️"
-    if any(x in t for x in ["printer"]): return "🖨️"
-    if any(x in v for x in ["apple", "samsung", "google"]): return "📱"
-    if any(x in v for x in ["intel", "dell", "hp ", "lenovo", "microsoft"]): return "💻"
-    if any(x in v for x in ["netgear", "cisco", "ubiquiti", "tp-link"]): return "🌐"
-    if any(x in v for x in ["espressif", "tuya"]): return "🔌" 
+    if any(x in t for x in ["iphone", "ipad", "pixel", "galaxy", "phone", "mobile", "android", "ios"]): return "📱"
+    if any(x in t for x in ["macbook", "workstation", "laptop", "desktop", "pc", "windows", "imac", "thinkpad"]): return "💻"
+    if any(x in t for x in ["tv", "roku", "chromecast", "apple tv", "bravia", "firestick", "fire tv", "shield", "display", "monitor", "webos", "tizen"]): return "📺"
+    if any(x in t for x in ["playstation", "xbox", "nintendo", "console", "switch"]): return "🎮"
+    if any(x in t for x in ["camera", "cam", "cctv", "nvr", "dvr", "hikvision", "dahua"]): return "📷"
+    if any(x in t for x in ["nas", "server", "proxmox", "linux", "ubuntu", "debian", "centos", "redhat", "truenas"]): return "🗄️"
+    if any(x in t for x in ["printer", "print", "copier", "fax"]): return "🖨️"
+    if any(x in t for x in ["speaker", "sonos", "audio", "soundbar", "alexa", "echo", "homepod", "sound"]): return "🔊"
+    if any(x in t for x in ["light", "bulb", "switch", "plug", "relay", "shelly", "sonoff", "smart"]): return "💡"
+    if any(x in t for x in ["router", "gateway", "switch", "ap", "access point", "firewall", "unifi", "hub"]): return "🌐"
+
+    if "private" in v or "randomized" in v: return "🔒"
+    if any(x in v for x in ["nintendo", "sony interactive", "valve", "sega", "atari"]): return "🎮"
+    if any(x in v for x in ["brother", "epson", "canon", "lexmark", "ricoh", "xerox", "kyocera", "zebra", "konica", "fuji"]): return "🖨️"
+    if any(x in v for x in ["synology", "qnap", "asustor", "seagate", "western digital", "buffalo"]): return "🗄️"
+    if any(x in v for x in ["ring", "arlo", "wyze", "blink", "hikvision", "dahua", "axis communications", "reolink", "amcrest", "eufy"]): return "📷"
+    if any(x in v for x in ["amazon", "sonos", "bose", "jbl", "harman", "bang & olufsen", "denon", "marantz", "yamaha", "pioneer", "sennheiser"]): return "🔊"
+    if any(x in v for x in ["roku", "vizio", "tcl", "hisense", "lg electronics", "lg ", "samsung", "sony"]): return "📺"
+    if any(x in v for x in ["ge lighting", "espressif", "tuya", "broadlink", "sonoff", "shelly", "aqara", "signify", "philips", "lutron", "belkin", "wemo", "tp-link kasa", "lifx"]): return "💡"
+    if any(x in v for x in ["shenzhen", "sjit", "delta electronics", "hon hai", "foxconn", "pegatron", "compal", "realtek", "mediatek", "texas instruments", "murata", "liteon", "azurewave", "icomm", "phaten"]): return "🔌"
+    if any(x in v for x in ["apple", "google", "xiaomi", "oneplus", "oppo", "vivo", "huawei", "honor", "sony mobile", "htc", "motorola"]): return "📱"
+    if any(x in v for x in ["intel", "dell", "hp ", "hewlett-packard", "lenovo", "microsoft", "acer", "asustek", "asus", "msi", "gigabyte", "super micro", "fujitsu", "toshiba", "panasonic", "ibm"]): return "💻"
+    if any(x in v for x in ["netgear", "cisco", "ubiquiti", "tp-link", "linksys", "mikrotik", "aruba", "d-link", "zte", "fortinet", "juniper", "sophos", "netgate", "pfsense", "arris", "technicolor", "commscope", "sagemcom"]): return "🌐"
+    if any(x in v for x in ["vmware", "citrix", "xen", "oracle", "proxmox", "docker", "red hat"]): return "☁️"
     return "❓"
 
-# NEW: HTTP Title Scraper
 async def fetch_http_title(ip: str, port: int) -> str:
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=0.6)
@@ -267,7 +336,6 @@ async def fetch_http_title(ip: str, port: int) -> str:
 async def query_fingerprint_api(mac: str, ip: str, open_ports: list, telemetry: dict, scraped_title: str) -> dict:
     mac_upper, prefix_3b = mac.upper(), mac.upper()[:8]
     base_vendor = "Private/Randomized MAC" if (len(mac_upper) > 1 and mac_upper[1] in ['2', '6', 'A', 'E']) else None
-    
     if not base_vendor:
         try: base_vendor = await mac_checker.lookup(mac_upper)
         except Exception: base_vendor = None
@@ -276,34 +344,32 @@ async def query_fingerprint_api(mac: str, ip: str, open_ports: list, telemetry: 
     
     identity = {"vendor": base_vendor, "hostname": "", "device_type": "", "icon": "", "tags": ""}
 
-    # 1. Integrate Nmap Deep Cache
     if ip in NMAP_CACHE:
         nd = NMAP_CACHE[ip]
         if nd["nmap_name"]: identity["hostname"] = nd["nmap_name"]
         if nd["vendor_dict"] and mac in nd["vendor_dict"]: identity["vendor"] = nd["vendor_dict"][mac]
         if nd["os"]: identity["tags"] = f"[{nd['os']}]"
 
-    # 2. Hostname Fallbacks
-    if not identity["hostname"]:
-        identity["hostname"] = telemetry.get("dhcp_name") or telemetry.get("mdns_name") or ""
-        
-    # Clean mDNS noise
+    if not identity["hostname"]: identity["hostname"] = telemetry.get("dhcp_name") or telemetry.get("mdns_name") or ""
     c_name = identity["hostname"]
-    for scrap in ["._companion-link._tcp", "._apple-mobdev2._tcp", "._tcp", "_tcp"]:
-        c_name = c_name.replace(scrap, "")
+    for scrap in ["._companion-link._tcp", "._apple-mobdev2._tcp", "._tcp", "_tcp"]: c_name = c_name.replace(scrap, "")
     identity["hostname"] = c_name.strip(" .-_")
 
-    # 3. Device Type Identification (The new Tier 2)
-    if scraped_title:
-        identity["device_type"] = scraped_title
+    if scraped_title: identity["device_type"] = scraped_title
 
-    # Parse mDNS TXT records for exact hardware models
     txt = telemetry.get("mdns_txt", "")
     if txt and not identity["device_type"]:
         m = re.search(r'(?:model|md)=([^,; ]+)', txt)
         if m: identity["device_type"] = m.group(1)
 
-    # Heuristics Fallbacks
+    dns_history = telemetry.get("dns_queries", set())
+    if not identity["device_type"]:
+        dns_string = " ".join(dns_history).lower()
+        if "nintendo.net" in dns_string: identity["device_type"], identity["vendor"] = "Nintendo Switch", "Nintendo"
+        elif "playstation.net" in dns_string: identity["device_type"], identity["vendor"] = "PlayStation Console", "Sony"
+        elif "netflix.com" in dns_string and "Smart TV" not in identity["device_type"]: identity["device_type"] = "Media Streaming Device"
+        elif "wyze.com" in dns_string: identity["device_type"], identity["vendor"] = "Wyze Camera", "Wyze"
+
     if not identity["device_type"]:
         if 9304 in open_ports: identity["device_type"], identity["vendor"] = "PlayStation Console", "Sony"
         elif 8009 in open_ports: identity["device_type"], identity["vendor"] = "Chromecast / Google Node", "Google"
@@ -321,18 +387,18 @@ async def query_fingerprint_api(mac: str, ip: str, open_ports: list, telemetry: 
     return identity
 
 class DeviceUpdate(BaseModel):
-    custom_name: str
-    tags: str
-    icon_override: Optional[str] = None
+    custom_name: str; tags: str; icon_override: Optional[str] = None
 
 class ScheduleUpdate(BaseModel):
-    interval_minutes: int
-    subnet: str
+    interval_minutes: int; subnet: str
 
 @app.get("/")
 def serve_dashboard(): 
     if os.path.exists(UI_FILE): return FileResponse(UI_FILE, headers={"Cache-Control": "no-cache, no-store, must-revalidate, max-age=0"})
     return Response(status_code=404)
+
+@app.get("/favicon.ico", include_in_schema=False)
+def disable_favicon(): return Response(status_code=204)
 
 @app.post("/api/scan/schedule")
 def update_schedule(config: ScheduleUpdate):
@@ -346,6 +412,14 @@ def server_heartbeat():
     with closing(sqlite3.connect(DB_FILE)) as conn: count = conn.cursor().execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
     return {"status": "online", "paused": SYSTEM_STATE["sniffer_paused"], "alert_count": count, "intel_sync_complete": SYSTEM_STATE["intel_sync_complete"]}
 
+@app.post("/api/passive_alerts/pause")
+def pause_alerts(): 
+    SYSTEM_STATE["sniffer_paused"] = True; return {"success": True}
+
+@app.post("/api/passive_alerts/resume")
+def resume_alerts(): 
+    SYSTEM_STATE["sniffer_paused"] = False; return {"success": True}
+
 @app.get("/api/devices")
 def get_devices_by_scan(scan_id: Optional[str] = Query(None)):
     with closing(sqlite3.connect(DB_FILE)) as conn:
@@ -355,39 +429,60 @@ def get_devices_by_scan(scan_id: Optional[str] = Query(None)):
             scan_id = row[0] if row else None
         if not scan_id: return {"success": True, "devices": [], "scan_id": None}
         
-        # Pulling the new 3-tier layout DB fields
         rows = c.execute("""SELECT s.mac, s.ip, d.vendor, d.custom_name, d.tags, s.status, s.vulnerabilities, s.scan_id, d.icon_override, d.hostname, d.device_type FROM scans s LEFT JOIN devices d ON s.mac = d.mac WHERE s.scan_id = ?""", (scan_id,)).fetchall()
     
     devices = []
     for r in rows:
+        mac_addr = r[0]
         vendor, c_name, d_type = r[2] or "Unknown", r[3], r[10] or ""
+        
+        # 1. Fetch real-time telemetry from memory for deep-dive diagnostics
+        telem = DEVICE_TELEMETRY.get(mac_addr, {})
+        
+        # 2. Extract Last Seen timestamp
+        last_seen_ts = telem.get("last_seen", 0)
+        if last_seen_ts > 0:
+            last_seen_str = datetime.fromtimestamp(last_seen_ts).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            last_seen_str = r[7] # Fallback to active scan timestamp
+            
         devices.append({
-            "mac": r[0], "ip": r[1], "vendor": vendor, "icon": r[8] if r[8] else get_icon_for_vendor(vendor, d_type),
+            "mac": mac_addr, "ip": r[1], "vendor": vendor, "icon": r[8] if r[8] else get_icon_for_vendor(vendor, d_type),
             "custom_name": c_name, "tags": r[4], "status": r[5], "vulnerabilities": json.loads(r[6]) if r[6] else [], 
-            "scan_id": r[7], "icon_override": r[8], "hostname": r[9] or "", "device_type": d_type
+            "scan_id": r[7], "icon_override": r[8], "hostname": r[9] or "", "device_type": d_type,
+            "last_seen": last_seen_str,
+            "dhcp_prl": telem.get("dhcp_prl", ""),
+            "mdns_txt": telem.get("mdns_txt", ""),
+            "dns_history": list(telem.get("dns_queries", set()))
         })
     return {"success": True, "devices": devices, "scan_id": scan_id}
+
+@app.get("/api/topology")
+def get_topology():
+    with closing(sqlite3.connect(DB_FILE)) as conn:
+        c = conn.cursor()
+        row = c.execute("SELECT scan_id FROM scans ORDER BY id DESC LIMIT 1").fetchone()
+        if not row: return {"nodes": [], "edges": []}
+        rows = c.execute("SELECT s.mac, s.ip, d.hostname, d.vendor FROM scans s LEFT JOIN devices d ON s.mac = d.mac WHERE s.scan_id = ? AND s.status = 'online'", (row[0],)).fetchall()
+    
+    nodes, edges = [{"id": "GATEWAY", "label": "Default Gateway\nRouter", "group": "gateway"}], []
+    for r in rows:
+        ip_primary = r[1].split(',')[0]
+        nodes.append({"id": r[0], "label": f"{r[2] or r[3] or 'Unknown'}\n{ip_primary}", "group": "device"})
+        edges.append({"from": "GATEWAY", "to": r[0]})
+    return {"nodes": nodes, "edges": edges}
 
 async def async_grab_banner(ip: str, port: int) -> Optional[str]:
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=0.25)
         if port in [80, 8080]:
-            writer.write(b"HEAD / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            writer.write(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
             await writer.drain()
         data = await asyncio.wait_for(reader.read(128), timeout=0.20)
         banner = data.decode('utf-8', errors='ignore').strip()
         writer.close(); await writer.wait_closed()
         return banner if banner else f"Port {port} Open"
     except Exception: return None
-
-def query_official_intel(banner: str, port: int) -> List[dict]:
-    matched, b_upper = [], banner.upper()
-    if port == 23: return [{"id": "POLICY-CLEAR-TELNET", "description": "Telnet exposed.", "severity": "CRITICAL", "cvss": 9.8, "is_kev": True}]
-    for vuln in LOCAL_KEV_CACHE:
-        if vuln.get("product", "").upper() in b_upper and vuln.get("vendor", "").upper() in b_upper:
-            matched.append({"id": vuln.get("cveID", "CVE-UNKNOWN"), "description": f"[{vuln.get('vendor')} {vuln.get('product')}] {vuln.get('shortDescription')}", "severity": "HIGH", "cvss": 8.5, "is_kev": True})
-            break
-    return matched
 
 async def run_parallel_fingerprinting(ip: str) -> List[dict]:
     tasks = [async_grab_banner(ip, p) for p in TARGET_PORTS]
@@ -435,14 +530,11 @@ async def perform_network_scan(subnet: str = Query("192.168.1.0/24")):
             async with semaphore:
                 vulns = await run_parallel_fingerprinting(primary_ip)
                 open_ports = [int(v["id"].split("-")[1]) for v in vulns if v["id"].startswith("PORT-")]
-                
-                # Fetch HTTP title concurrently if web ports are open
                 web_ports = [p for p in open_ports if p in [80, 443, 8000, 8080]]
                 title_tasks = [fetch_http_title(primary_ip, p) for p in web_ports]
                 scraped_titles = await asyncio.gather(*title_tasks) if title_tasks else []
                 valid_titles = [t for t in scraped_titles if t]
                 best_title = valid_titles[0] if valid_titles else ""
-
                 identity = await query_fingerprint_api(mac, primary_ip, open_ports, DEVICE_TELEMETRY.get(mac, {}), best_title)
             
             return {
@@ -502,16 +594,6 @@ def clear_passive_alerts():
     global ALERTED_MACS; ALERTED_MACS.clear()
     with closing(sqlite3.connect(DB_FILE)) as conn:
         with conn: conn.cursor().execute("DELETE FROM alerts")
-    return {"success": True}
-
-@app.post("/api/passive_alerts/pause")
-async def pause_alerts():
-    SYSTEM_STATE["sniffer_paused"] = True
-    return {"success": True}
-
-@app.post("/api/passive_alerts/resume")
-async def resume_alerts():
-    SYSTEM_STATE["sniffer_paused"] = False
     return {"success": True}
 
 @app.get("/api/passive_alerts")
