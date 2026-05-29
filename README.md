@@ -59,9 +59,8 @@ cd secops-core
 ### 2. Configure docker-compose.yml
 
 Create or modify your docker-compose.yml file. Note: network_mode: "host" and elevated capabilities are mandatory.
-YAML
 
-version: '3.8'
+```version: '3.8'
 
 services:
   secops-core:
@@ -82,29 +81,33 @@ services:
       # - SYSLOG_SERVER=192.168.1.100:514
       - DB_PATH=/app/data/network_state.db
     volumes:
-      - ./data:/app/data
-
+      - ./data:/app/data'
+```
 ### 3. Deploy the Stack
 
 docker-compose up -d --build
 
+
 ### 4. Access the Dashboard
 
 Open your browser and navigate to http://localhost:13000.
+
 ⚙️ Environment Variables
 Variable	Default	Description
+
+```
 HOST	0.0.0.0	The interface IP the web server binds to.
 PORT	13000	The port the web dashboard is served on.
 TARGET_SUBNET	192.168.1.0/24	The CIDR block you wish to actively audit via Nmap.
 AUTOSCAN_INTERVAL	900	Automated Nmap scan schedule in seconds. Set to 0 for manual only.
 NET_INTERFACE	Auto-detected	Force Scapy to bind to a specific physical interface (e.g., eth0).
 WEBHOOK_URL	None	Slack/Discord Webhook URL for push notifications.
-SYSLOG_SERVER	None	IP:PORT of your SIEM for log forwarding (e.g., 10.0.0.5:514).
+SYSLOG_SERVER	None	IP:PORT of your SIEM for log forwarding (e.g., 10.0.0.5:514).'
+```
 
 ⚠️ Disclaimer & Ethical Use
 
-This tool includes active network disruption capabilities.
-The "Toggle Isolation" feature executes an automated, localized Denial of Service attack (ARP Poisoning) against target MAC addresses.
+This tool includes active network disruption capabilities. The "Toggle Isolation" feature executes an automated, localized Denial of Service attack (ARP Poisoning) against target MAC addresses.
 
     Do NOT run this software on corporate, public, or educational networks without explicit written authorization from the network owner or administration.
 
