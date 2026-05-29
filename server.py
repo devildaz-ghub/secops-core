@@ -4,6 +4,8 @@ import asyncio
 import time
 import re
 import socket
+import logging
+from logging.handlers import SysLogHandler
 from datetime import datetime
 from mac_vendor_lookup import AsyncMacLookup
 from fastapi.responses import FileResponse
@@ -19,8 +21,9 @@ from contextlib import asynccontextmanager, closing
 from typing import List, Optional
 
 # =====================================================================
-# 1. DYNAMIC ENVIRONMENT VARIABLE CONFIGURATION & ENVIRONMENT DETECTION
+# 1. CORE CONFIGURATION & ENVIRONMENT (v2.0.0)
 # =====================================================================
+VERSION = "v2.0.0"
 IS_WINDOWS = os.name == 'nt'
 IS_CONTAINER = os.path.exists('/.dockerenv') or os.environ.get('KUBERNETES_SERVICE_HOST') is not None
 
@@ -28,7 +31,8 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "13000"))
 TARGET_SUBNET = os.getenv("TARGET_SUBNET", "192.168.1.0/24")
 AUTOSCAN_INTERVAL = int(os.getenv("AUTOSCAN_INTERVAL", "900")) 
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "") # Add your Discord/Slack Webhook URL here
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+SYSLOG_SERVER = os.getenv("SYSLOG_SERVER", "") # Example: "192.168.1.100:514"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.getenv("DB_PATH", os.path.join(BASE_DIR, "network_state.db"))
@@ -37,40 +41,38 @@ UI_FILE = os.getenv("UI_STATIC_PATH", os.path.join(BASE_DIR, "index.html"))
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 TARGET_PORTS = [22, 23, 80, 443, 515, 554, 445, 8000, 8009, 8080, 9100, 9304, 32400, 62078]
 
-# =====================================================================
-# 2. CROSS-PLATFORM PRIVILEGE & RESOURCE RUNTIME VALIDATION
-# =====================================================================
+# Enterprise SIEM Logger Setup
+syslogger = logging.getLogger("SecOpsCore")
+syslogger.setLevel(logging.INFO)
+if SYSLOG_SERVER:
+    try:
+        syslog_ip, syslog_port = SYSLOG_SERVER.split(':')
+        syslogger.addHandler(SysLogHandler(address=(syslog_ip, int(syslog_port))))
+        print(f"[✅ SIEM] Syslog forwarding active to {SYSLOG_SERVER}")
+    except Exception as e:
+        print(f"[⚠️ SIEM] Failed to bind Syslog: {e}")
+
 def verify_runtime_privileges():
-    print(f"⚙️ Runtime Environment: {'Container (Docker/K8s)' if IS_CONTAINER else 'Native Host'}")
+    print(f"⚙️ SecOps Core {VERSION} | Environment: {'Container' if IS_CONTAINER else 'Native'}")
     if IS_WINDOWS:
         import ctypes
-        if ctypes.windll.shell32.IsUserAnAdmin() == 0:
-            print("\n❌ CRITICAL: Administrator Privileges Required on Windows.")
-            print("Launch your terminal using 'Run as Administrator'.\n")
-            sys.exit(1)
+        if ctypes.windll.shell32.IsUserAnAdmin() == 0: sys.exit("❌ CRITICAL: Run as Administrator.")
     else:
-        if os.getuid() != 0:
-            if IS_CONTAINER:
-                print("\n⚠️ WARNING: Running as non-root inside a container context.")
-            else:
-                print("\n❌ CRITICAL: Root privileges required on Linux. Use 'sudo'.\n")
-                sys.exit(1)
+        if os.getuid() != 0: sys.exit("❌ CRITICAL: Root privileges required. Use 'sudo'.")
 
 verify_runtime_privileges()
 
 ENV_INTERFACE = os.getenv("NET_INTERFACE")
-if ENV_INTERFACE:
-    TARGET_INTERFACE = ENV_INTERFACE
+if ENV_INTERFACE: TARGET_INTERFACE = ENV_INTERFACE
 else:
     try:
         interfaces = scapy.conf.ifaces.keys()
         qnap_iface = next((i for i in interfaces if i.startswith("qvs") or i.startswith("br")), None)
         TARGET_INTERFACE = qnap_iface if qnap_iface else scapy.conf.iface
-    except Exception:
-        TARGET_INTERFACE = scapy.conf.iface
+    except Exception: TARGET_INTERFACE = scapy.conf.iface
 
 # =====================================================================
-# 3. CORE STATE ENGINE & TELEMETRY
+# 2. STATE ENGINE & TELEMETRY
 # =====================================================================
 last_scan_time = time.time()
 last_purge_time = time.time()
@@ -83,7 +85,6 @@ NMAP_CACHE = {}
 ALERTED_MACS = set() 
 ACTIVE_QUARANTINES = set() 
 sniffer_handle = None
-
 SYSTEM_STATE = {"sniffer_paused": False, "intel_sync_complete": False}
 
 LOCAL_OUI_FALLBACK = {
@@ -94,6 +95,7 @@ LOCAL_OUI_FALLBACK = {
 }
 
 def trigger_webhook(title: str, message: str, color: int = 16711680):
+    if SYSLOG_SERVER: syslogger.info(f"SecOpsAlert: {title} | {message}")
     if not WEBHOOK_URL: return
     try:
         payload = {"embeds": [{"title": title, "description": message, "color": color}]}
@@ -150,6 +152,14 @@ async def auto_scan_loop():
                 await perform_network_scan(TARGET_SUBNET)
                 last_scan_time = time.time()
 
+def trigger_alert(mac, ip, alert_type, title, msg):
+    with closing(sqlite3.connect(DB_FILE, timeout=1.0)) as conn:
+        c = conn.cursor()
+        # Avoid spamming the same alert type for the same mac
+        if not c.execute("SELECT id FROM alerts WHERE mac = ? AND type = ?", (mac, alert_type)).fetchone():
+            with conn: c.execute("INSERT INTO alerts (mac, ip, timestamp, type, created_at) VALUES (?, ?, ?, ?, ?)", (mac, ip, datetime.now().strftime("%H:%M:%S"), alert_type, time.time()))
+            trigger_webhook(title, msg)
+
 def passive_packet_callback(pkt):
     if SYSTEM_STATE["sniffer_paused"]: return
     global ALERTED_MACS, DEVICE_TELEMETRY
@@ -160,8 +170,17 @@ def passive_packet_callback(pkt):
             if src_mac in ["FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00"] or src_mac.startswith("33:33"): return
 
             if src_mac not in DEVICE_TELEMETRY:
-                DEVICE_TELEMETRY[src_mac] = {"dhcp_name": "", "dhcp_prl": "", "mdns_name": "", "mdns_txt": "", "dns_queries": set(), "last_seen": 0}
+                DEVICE_TELEMETRY[src_mac] = {"dhcp_name": "", "dhcp_prl": "", "mdns_name": "", "mdns_txt": "", "dns_queries": set(), "last_seen": 0, "bandwidth": 0, "syn_targets": set()}
+            
             DEVICE_TELEMETRY[src_mac]["last_seen"] = time.time()
+            DEVICE_TELEMETRY[src_mac]["bandwidth"] += len(pkt) # Analytics Bandwidth Tracker
+
+            # Advanced Threat Detection: Port Scan / Lateral Movement
+            if pkt.haslayer(scapy.TCP) and pkt[scapy.TCP].flags == "S":
+                dst_ip = pkt[scapy.IP].dst
+                DEVICE_TELEMETRY[src_mac]["syn_targets"].add(dst_ip)
+                if len(DEVICE_TELEMETRY[src_mac]["syn_targets"]) > 20:
+                    trigger_alert(src_mac, src_ip, "LATERAL_MOVEMENT_SCAN", "🚨 Lateral Movement Detected", f"Asset **{src_mac}** ({src_ip}) is rapidly scanning distinct IP addresses.")
 
             if pkt.haslayer(scapy.DHCP):
                 for opt in pkt[scapy.DHCP].options:
@@ -190,19 +209,16 @@ def passive_packet_callback(pkt):
                                 if 'model=' in rdata or 'md=' in rdata: DEVICE_TELEMETRY[src_mac]["mdns_txt"] = rdata
                             except Exception: pass
 
-            if src_mac in ALERTED_MACS: return
-            with closing(sqlite3.connect(DB_FILE, timeout=1.0)) as conn:
-                c = conn.cursor()
-                if not c.execute("SELECT mac FROM devices WHERE mac = ?", (src_mac,)).fetchone():
-                    with conn: c.execute("INSERT INTO alerts (mac, ip, timestamp, type, created_at) VALUES (?, ?, ?, ?, ?)", (src_mac, src_ip, datetime.now().strftime("%H:%M:%S"), "ROGUE_DEVICE_TRAP", time.time()))
-                    ALERTED_MACS.add(src_mac)
-                    trigger_webhook("🚨 Rogue Device Detected", f"A new device with MAC **{src_mac}** and IP **{src_ip}** was detected on the network.")
+            if src_mac not in ALERTED_MACS:
+                with closing(sqlite3.connect(DB_FILE, timeout=1.0)) as conn:
+                    if not conn.cursor().execute("SELECT mac FROM devices WHERE mac = ?", (src_mac,)).fetchone():
+                        trigger_alert(src_mac, src_ip, "ROGUE_DEVICE_TRAP", "🚨 Rogue Device Detected", f"A new device with MAC **{src_mac}** and IP **{src_ip}** connected.")
+                        ALERTED_MACS.add(src_mac)
     except Exception: pass
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global sniffer_handle, ALERTED_MACS, FINGERBANK_CACHE
-    
     FINGERBANK_CACHE = {"0103060f1f212b2c2e2f7779f9fc": {"vendor": "Microsoft", "name": "Windows PC"}, "0103060f775ffc2c2e2f": {"vendor": "Apple", "name": "iOS/Mac Device"}, "0103060f1c21333a3b": {"vendor": "Google", "name": "Android Device"}}
 
     db_directory = os.path.dirname(DB_FILE)
@@ -218,11 +234,11 @@ async def lifespan(app: FastAPI):
             c.execute("SELECT mac FROM alerts")
             ALERTED_MACS.update(row[0] for row in c.fetchall())
 
-    bpf_rule = "udp port 67 or udp port 68 or udp port 5353 or udp port 53"
+    bpf_rule = "udp port 67 or udp port 68 or udp port 5353 or udp port 53 or tcp[tcpflags] == tcp-syn"
     try:
         sniffer_handle = scapy.AsyncSniffer(prn=passive_packet_callback, store=0, filter=bpf_rule, iface=TARGET_INTERFACE)
         sniffer_handle.start()
-    except Exception as e: print(f"[⚠️ SNIFFER] Passive monitoring failure. Error: {e}")
+    except Exception as e: print(f"[⚠️ SNIFFER] Monitoring failure: {e}")
 
     asyncio.create_task(background_intel_sync())
     asyncio.create_task(auto_scan_loop())
@@ -234,9 +250,8 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # =====================================================================
-# 4. ACTIVE REMEDIATION MODULE (ARP Quaratine & WoL)
+# 3. ACTIVE REMEDIATION MODULE (ARP Quaratine & WoL)
 # =====================================================================
-
 async def arp_quarantine_task(target_mac, target_ip):
     try:
         gw_ip = scapy.conf.route.route("0.0.0.0")[2]
@@ -249,14 +264,11 @@ async def arp_quarantine_task(target_mac, target_ip):
         pkt_to_target = scapy.Ether(dst=target_mac)/scapy.ARP(op=2, pdst=target_ip, psrc=gw_ip, hwdst=target_mac, hwsrc=server_mac)
         pkt_to_gw = scapy.Ether(dst=gw_mac)/scapy.ARP(op=2, pdst=gw_ip, psrc=target_ip, hwdst=gw_mac, hwsrc=server_mac)
 
-        print(f"[🛡️ IPS] Initiating localized ARP quarantine on {target_mac}")
         while target_mac in ACTIVE_QUARANTINES:
             scapy.sendp(pkt_to_target, verbose=False, iface=TARGET_INTERFACE)
             scapy.sendp(pkt_to_gw, verbose=False, iface=TARGET_INTERFACE)
             await asyncio.sleep(2.0)
-            
-    except Exception as e:
-        print(f"[⚠️ IPS] Quarantine failed for {target_mac}: {e}")
+    except Exception:
         if target_mac in ACTIVE_QUARANTINES: ACTIVE_QUARANTINES.remove(target_mac)
 
 @app.post("/api/device/{mac}/quarantine")
@@ -264,24 +276,22 @@ async def toggle_quarantine(mac: str):
     mac = mac.upper()
     if mac in ACTIVE_QUARANTINES:
         ACTIVE_QUARANTINES.remove(mac)
-        trigger_webhook("🟢 Isolation Lifted", f"Asset **{mac}** has been released from ARP quarantine.", 65280)
-        return {"success": True, "message": "Quarantine lifted. Device connectivity restored."}
+        trigger_webhook("🟢 Isolation Lifted", f"Asset **{mac}** released from ARP quarantine.", 65280)
+        return {"success": True, "message": "Quarantine lifted."}
     else:
         with closing(sqlite3.connect(DB_FILE)) as conn:
             row = conn.cursor().execute("SELECT ip FROM scans WHERE mac=? ORDER BY id DESC LIMIT 1", (mac,)).fetchone()
-        if not row: return {"success": False, "detail": "Cannot quarantine: No known IP address for this MAC."}
+        if not row: return {"success": False, "detail": "Cannot quarantine: No IP address known."}
         
-        target_ip = row[0].split(',')[0].strip()
         ACTIVE_QUARANTINES.add(mac)
-        asyncio.create_task(arp_quarantine_task(mac, target_ip))
-        trigger_webhook("🛑 Isolation Triggered", f"Asset **{mac}** has been actively blackholed via ARP poisoning.", 16711680)
-        return {"success": True, "message": "ARP Poisoning activated. Device isolated."}
+        asyncio.create_task(arp_quarantine_task(mac, row[0].split(',')[0].strip()))
+        trigger_webhook("🛑 Isolation Triggered", f"Asset **{mac}** blackholed via ARP poisoning.", 16711680)
+        return {"success": True, "message": "ARP Poisoning activated."}
 
 @app.post("/api/device/{mac}/wake")
 def wake_device(mac: str):
     try:
         mac_clean = mac.replace(':', '').replace('-', '')
-        if len(mac_clean) != 12: raise ValueError("Invalid MAC Address format")
         magic_packet = b'\xff' * 6 + bytes.fromhex(mac_clean) * 16
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -290,7 +300,7 @@ def wake_device(mac: str):
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 # =====================================================================
-# 5. API ENDPOINTS & UTILITIES
+# 4. API ENDPOINTS & UTILITIES
 # =====================================================================
 def get_icon_for_vendor(vendor_name, device_type=""):
     v, t = (vendor_name or "").lower(), (device_type or "").lower()
@@ -304,7 +314,6 @@ def get_icon_for_vendor(vendor_name, device_type=""):
     if any(x in t for x in ["speaker", "sonos", "audio", "soundbar", "alexa", "echo", "homepod", "sound"]): return "🔊"
     if any(x in t for x in ["light", "bulb", "switch", "plug", "relay", "shelly", "sonoff", "smart"]): return "💡"
     if any(x in t for x in ["router", "gateway", "switch", "ap", "access point", "firewall", "unifi", "hub"]): return "🌐"
-
     if "private" in v or "randomized" in v: return "🔒"
     if any(x in v for x in ["nintendo", "sony interactive", "valve", "sega", "atari"]): return "🎮"
     if any(x in v for x in ["brother", "epson", "canon", "lexmark", "ricoh", "xerox", "kyocera", "zebra", "konica", "fuji"]): return "🖨️"
@@ -327,11 +336,9 @@ async def fetch_http_title(ip: str, port: int) -> str:
         await writer.drain()
         data = await asyncio.wait_for(reader.read(2048), timeout=0.6)
         writer.close(); await writer.wait_closed()
-        text = data.decode('utf-8', errors='ignore')
-        match = re.search(r'(?i)<title>(.*?)</title>', text)
-        if match: return match.group(1).strip()
-    except Exception: pass
-    return ""
+        match = re.search(r'(?i)<title>(.*?)</title>', data.decode('utf-8', errors='ignore'))
+        return match.group(1).strip() if match else ""
+    except Exception: return ""
 
 async def query_fingerprint_api(mac: str, ip: str, open_ports: list, telemetry: dict, scraped_title: str) -> dict:
     mac_upper, prefix_3b = mac.upper(), mac.upper()[:8]
@@ -386,11 +393,8 @@ async def query_fingerprint_api(mac: str, ip: str, open_ports: list, telemetry: 
     identity["icon"] = get_icon_for_vendor(identity["vendor"], identity["device_type"])
     return identity
 
-class DeviceUpdate(BaseModel):
-    custom_name: str; tags: str; icon_override: Optional[str] = None
-
-class ScheduleUpdate(BaseModel):
-    interval_minutes: int; subnet: str
+class DeviceUpdate(BaseModel): custom_name: str; tags: str; icon_override: Optional[str] = None
+class ScheduleUpdate(BaseModel): interval_minutes: int; subnet: str
 
 @app.get("/")
 def serve_dashboard(): 
@@ -403,8 +407,7 @@ def disable_favicon(): return Response(status_code=204)
 @app.post("/api/scan/schedule")
 def update_schedule(config: ScheduleUpdate):
     global AUTOSCAN_INTERVAL, TARGET_SUBNET, last_scan_time
-    AUTOSCAN_INTERVAL = config.interval_minutes * 60
-    TARGET_SUBNET = config.subnet; last_scan_time = time.time()
+    AUTOSCAN_INTERVAL = config.interval_minutes * 60; TARGET_SUBNET = config.subnet; last_scan_time = time.time()
     return {"success": True}
 
 @app.get("/api/heartbeat")
@@ -413,12 +416,10 @@ def server_heartbeat():
     return {"status": "online", "paused": SYSTEM_STATE["sniffer_paused"], "alert_count": count, "intel_sync_complete": SYSTEM_STATE["intel_sync_complete"]}
 
 @app.post("/api/passive_alerts/pause")
-def pause_alerts(): 
-    SYSTEM_STATE["sniffer_paused"] = True; return {"success": True}
+def pause_alerts(): SYSTEM_STATE["sniffer_paused"] = True; return {"success": True}
 
 @app.post("/api/passive_alerts/resume")
-def resume_alerts(): 
-    SYSTEM_STATE["sniffer_paused"] = False; return {"success": True}
+def resume_alerts(): SYSTEM_STATE["sniffer_paused"] = False; return {"success": True}
 
 @app.get("/api/devices")
 def get_devices_by_scan(scan_id: Optional[str] = Query(None)):
@@ -428,29 +429,21 @@ def get_devices_by_scan(scan_id: Optional[str] = Query(None)):
             row = c.execute("SELECT scan_id FROM scans ORDER BY id DESC LIMIT 1").fetchone()
             scan_id = row[0] if row else None
         if not scan_id: return {"success": True, "devices": [], "scan_id": None}
-        
         rows = c.execute("""SELECT s.mac, s.ip, d.vendor, d.custom_name, d.tags, s.status, s.vulnerabilities, s.scan_id, d.icon_override, d.hostname, d.device_type FROM scans s LEFT JOIN devices d ON s.mac = d.mac WHERE s.scan_id = ?""", (scan_id,)).fetchall()
     
     devices = []
     for r in rows:
         mac_addr = r[0]
         vendor, c_name, d_type = r[2] or "Unknown", r[3], r[10] or ""
-        
-        # 1. Fetch real-time telemetry from memory for deep-dive diagnostics
         telem = DEVICE_TELEMETRY.get(mac_addr, {})
-        
-        # 2. Extract Last Seen timestamp
         last_seen_ts = telem.get("last_seen", 0)
-        if last_seen_ts > 0:
-            last_seen_str = datetime.fromtimestamp(last_seen_ts).strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            last_seen_str = r[7] # Fallback to active scan timestamp
-            
+        
         devices.append({
             "mac": mac_addr, "ip": r[1], "vendor": vendor, "icon": r[8] if r[8] else get_icon_for_vendor(vendor, d_type),
             "custom_name": c_name, "tags": r[4], "status": r[5], "vulnerabilities": json.loads(r[6]) if r[6] else [], 
             "scan_id": r[7], "icon_override": r[8], "hostname": r[9] or "", "device_type": d_type,
-            "last_seen": last_seen_str,
+            "last_seen": datetime.fromtimestamp(last_seen_ts).strftime("%Y-%m-%d %H:%M:%S") if last_seen_ts > 0 else r[7],
+            "bandwidth": telem.get("bandwidth", 0), # Telemetry Feature Update
             "dhcp_prl": telem.get("dhcp_prl", ""),
             "mdns_txt": telem.get("mdns_txt", ""),
             "dns_history": list(telem.get("dns_queries", set()))
@@ -472,18 +465,67 @@ def get_topology():
         edges.append({"from": "GATEWAY", "to": r[0]})
     return {"nodes": nodes, "edges": edges}
 
-async def async_grab_banner(ip: str, port: int) -> Optional[str]:
-    try:
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=0.25)
-        if port in [80, 8080]:
-            writer.write(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-            await writer.drain()
-        data = await asyncio.wait_for(reader.read(128), timeout=0.20)
-        banner = data.decode('utf-8', errors='ignore').strip()
-        writer.close(); await writer.wait_closed()
-        return banner if banner else f"Port {port} Open"
-    except Exception: return None
+# --- Enterprise Integration: Prometheus Metrics ---
+@app.get("/metrics")
+def prometheus_metrics():
+    with closing(sqlite3.connect(DB_FILE)) as conn:
+        c = conn.cursor()
+        sid_row = c.execute("SELECT scan_id FROM scans ORDER BY id DESC LIMIT 1").fetchone()
+        if not sid_row: return Response("secops_devices_total 0\n", media_type="text/plain")
+        
+        sid = sid_row[0]
+        total = c.execute("SELECT COUNT(*) FROM scans WHERE scan_id=?", (sid,)).fetchone()[0]
+        vulns = c.execute("SELECT COUNT(*) FROM scans WHERE scan_id=? AND vulnerabilities != '[]'", (sid,)).fetchone()[0]
+        alerts = c.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+        
+        payload = f"""# HELP secops_devices_total Total monitored infrastructure devices
+# TYPE secops_devices_total gauge
+secops_devices_total {total}
+# HELP secops_vulnerable_total Count of devices with CVE flagged ports
+# TYPE secops_vulnerable_total gauge
+secops_vulnerable_total {vulns}
+# HELP secops_active_alerts Active unresolved network alerts
+# TYPE secops_active_alerts gauge
+secops_active_alerts {alerts}
+"""
+        return Response(content=payload, media_type="text/plain")
 
+# --- UI Integration: Historical Analytics ---
+@app.get("/api/trends")
+def get_trends():
+    with closing(sqlite3.connect(DB_FILE)) as conn:
+        c = conn.cursor()
+        scans = c.execute("SELECT DISTINCT scan_id FROM scans ORDER BY scan_id DESC LIMIT 10").fetchall()
+        trends = []
+        for (sid,) in reversed(scans):
+            total = c.execute("SELECT COUNT(*) FROM scans WHERE scan_id=?", (sid,)).fetchone()[0]
+            vulns = c.execute("SELECT COUNT(*) FROM scans WHERE scan_id=? AND vulnerabilities != '[]'", (sid,)).fetchone()[0]
+            trends.append({"label": sid.split(' ')[1], "total": total, "vuln": vulns})
+        return {"success": True, "trends": trends}
+    
+async def async_grab_banner(ip: str, port: int) -> str:
+    """Attempts to connect to a port and grab its service banner."""
+    try:
+        # Open a connection with a short timeout
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port), timeout=1.0
+        )
+        
+        # Send a generic payload to provoke a response from HTTP/TCP services
+        writer.write(b"HEAD / HTTP/1.1\r\n\r\n")
+        await writer.drain()
+        
+        # Read the response banner
+        data = await asyncio.wait_for(reader.read(1024), timeout=1.0)
+        
+        writer.close()
+        await writer.wait_closed()
+        
+        return data.decode('utf-8', errors='ignore').strip()
+    except Exception:
+        # If connection fails, times out, or refuses, return an empty string
+        return ""
+    
 async def run_parallel_fingerprinting(ip: str) -> List[dict]:
     tasks = [async_grab_banner(ip, p) for p in TARGET_PORTS]
     banners = await asyncio.gather(*tasks)
@@ -498,22 +540,15 @@ async def run_parallel_fingerprinting(ip: str) -> List[dict]:
 def run_active_sweeps(subnet):
     discovered = {}
     def add_host(mac, ip):
-        if mac and ip and mac not in ["00:00:00:00:00:00", "FF:FF:FF:FF:FF:FF"]:
-            if mac not in discovered: discovered[mac] = set()
-            discovered[mac].add(ip)
-
+        if mac and ip and mac not in ["00:00:00:00:00:00", "FF:FF:FF:FF:FF:FF"]: discovered.setdefault(mac, set()).add(ip)
     try:
         ans_arp, _ = scapy.srp(scapy.Ether(dst="ff:ff:ff:ff:ff:ff")/scapy.ARP(pdst=subnet), timeout=3, retry=2, inter=0.02, verbose=False, iface=TARGET_INTERFACE)
         for s, r in ans_arp: add_host(r.hwsrc.upper(), r.psrc)
-    except Exception: pass
-
-    try:
         ans_icmp, _ = scapy.srp(scapy.Ether(dst="ff:ff:ff:ff:ff:ff")/scapy.IP(dst=subnet)/scapy.ICMP(), timeout=3, retry=1, inter=0.02, verbose=False, iface=TARGET_INTERFACE, multi=True)
         for s, r in ans_icmp:
             if scapy.IP in r: add_host(r.src.upper(), r[scapy.IP].src)
     except Exception: pass
-
-    return [{"mac": mac, "ips": ips} for mac, ips in discovered.items()]
+    return [{"mac": m, "ips": i} for m, i in discovered.items()]
 
 @app.get("/api/scan")
 async def perform_network_scan(subnet: str = Query("192.168.1.0/24")):
@@ -534,31 +569,23 @@ async def perform_network_scan(subnet: str = Query("192.168.1.0/24")):
                 title_tasks = [fetch_http_title(primary_ip, p) for p in web_ports]
                 scraped_titles = await asyncio.gather(*title_tasks) if title_tasks else []
                 valid_titles = [t for t in scraped_titles if t]
-                best_title = valid_titles[0] if valid_titles else ""
-                identity = await query_fingerprint_api(mac, primary_ip, open_ports, DEVICE_TELEMETRY.get(mac, {}), best_title)
+                identity = await query_fingerprint_api(mac, primary_ip, open_ports, DEVICE_TELEMETRY.get(mac, {}), valid_titles[0] if valid_titles else "")
             
-            return {
-                "mac": mac, "ip": list(host["ips"]), "vendor": identity["vendor"], 
-                "hostname": identity["hostname"], "device_type": identity["device_type"],
-                "icon": identity["icon"], "tags": identity.get("tags", ""), "vulns": json.dumps(vulns)
-            }
+            return {"mac": mac, "ip": list(host["ips"]), "vendor": identity["vendor"], "hostname": identity["hostname"], "device_type": identity["device_type"], "icon": identity["icon"], "tags": identity.get("tags", ""), "vulns": json.dumps(vulns)}
 
         raw_results = await asyncio.gather(*[process_device(h) for h in raw_hosts])
-
         unique_results = {}
         for dev in raw_results:
             mac = dev["mac"]
             if mac not in unique_results:
-                unique_results[mac] = dev.copy()
-                unique_results[mac]["ip_set"] = set(dev["ip"])
+                unique_results[mac] = dev.copy(); unique_results[mac]["ip_set"] = set(dev["ip"])
             else: unique_results[mac]["ip_set"].update(dev["ip"])
 
         results = []
         for mac, dev in unique_results.items():
             ips = list(dev["ip_set"])
             dev["ip"] = f"{ips[0]}, {ips[1]}, {ips[2]}, (+ proxy)" if len(ips) > 3 else ", ".join(ips)
-            del dev["ip_set"]
-            results.append(dev)
+            del dev["ip_set"]; results.append(dev)
 
         with closing(sqlite3.connect(DB_FILE)) as conn:
             with conn:
@@ -567,10 +594,8 @@ async def perform_network_scan(subnet: str = Query("192.168.1.0/24")):
                     c.execute("INSERT OR IGNORE INTO devices (mac, vendor, custom_name, tags, icon_override, hostname, device_type) VALUES (?, ?, '', ?, '', ?, ?)", (dev["mac"], dev["vendor"], dev["tags"], dev["hostname"], dev["device_type"]))
                     c.execute("UPDATE devices SET vendor=?, hostname=?, device_type=? WHERE mac=?", (dev["vendor"], dev["hostname"], dev["device_type"], dev["mac"]))
                     if dev["tags"]: c.execute("UPDATE devices SET tags=? WHERE mac=? AND tags=''", (dev["tags"], dev["mac"]))
-                
                 scan_records = [(scan_id, dev["mac"], dev["ip"], 'online', dev["vulns"]) for dev in results]
                 c.executemany("INSERT INTO scans (scan_id, mac, ip, status, vulnerabilities) VALUES (?, ?, ?, ?, ?)", scan_records)
-
                 prev_row = c.execute("SELECT DISTINCT scan_id FROM scans WHERE scan_id != ? ORDER BY id DESC LIMIT 1", (scan_id,)).fetchone()
                 if prev_row:
                     c.execute("SELECT mac, ip, vulnerabilities FROM scans WHERE scan_id = ? AND mac NOT IN (SELECT mac FROM scans WHERE scan_id = ?)", (prev_row[0], scan_id))
@@ -605,7 +630,7 @@ def get_passive_alerts():
 if __name__ == "__main__":
     import uvicorn
     print("\n" + "="*50)
-    print(f"🚀 SecOps Core Backend Online binding to {HOST}:{PORT}")
+    print(f"🚀 SecOps Core Backend {VERSION} Online binding to {HOST}:{PORT}")
     print("="*50 + "\n")
     module_name = os.path.splitext(os.path.basename(__file__))[0]
     uvicorn.run(f"{module_name}:app", host=HOST, port=PORT, reload=True, log_level="warning")

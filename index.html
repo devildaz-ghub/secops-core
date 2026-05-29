@@ -3,31 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SecOps Core | ITAM Dashboard</title>
+    <title>SecOps Core | Enterprise ITAM</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
     
     <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/standalone/umd/vis-network.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <style>
         :root {
+            /* Light Theme Variables */
             --bg-main: #f8fafc; --surface-card: #ffffff; --text-primary: #0f172a; --text-secondary: #475569;
             --text-muted: #94a3b8; --border-flat: #e2e8f0; --border-active: #cbd5e1; --brand-primary: #0284c7;
             --brand-primary-hover: #0369a1; --flat-success: #10b981; --flat-danger: #ef4444; --flat-warning: #f59e0b;
             --flat-info: #38bdf8; --flat-dark: #1e293b;
         }
 
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg-main); color: var(--text-primary); margin: 0; padding: 0; height: 100vh; overflow: hidden; box-sizing: border-box; }
+        /* Dark Mode Overrides */
+        body.dark-theme {
+            --bg-main: #0f172a; --surface-card: #1e293b; --text-primary: #f8fafc; --text-secondary: #cbd5e1;
+            --text-muted: #64748b; --border-flat: #334155; --border-active: #475569; --flat-dark: #cbd5e1;
+        }
+
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg-main); color: var(--text-primary); margin: 0; padding: 0; height: 100vh; overflow: hidden; box-sizing: border-box; transition: background 0.3s, color 0.3s; }
         *, *::before, *::after { box-sizing: border-box; }
 
         .app-container { display: flex; width: 100%; height: 100vh; }
-        .sidebar-left { width: 280px; flex-shrink: 0; background: #1e293b; color: #f8fafc; padding: 1.5rem; border-right: 1px solid rgba(255,255,255,0.1); overflow-y: auto; display: flex; flex-direction: column; }
+        .sidebar-left { width: 280px; flex-shrink: 0; background: #0f172a; color: #f8fafc; padding: 1.5rem; border-right: 1px solid rgba(255,255,255,0.05); overflow-y: auto; display: flex; flex-direction: column; }
         .main-canvas { flex: 1; padding: 1.5rem; overflow-y: auto; position: relative; display: flex; flex-direction: column;}
-        .sidebar-right { width: 440px; flex-shrink: 0; background: var(--surface-card); padding: 1.5rem; border-left: 1px solid var(--border-flat); overflow-y: auto; box-shadow: -4px 0 15px rgba(0,0,0,0.03); z-index: 10; display: none; flex-direction: column; }
+        .sidebar-right { width: 440px; flex-shrink: 0; background: var(--surface-card); padding: 1.5rem; border-left: 1px solid var(--border-flat); overflow-y: auto; box-shadow: -4px 0 15px rgba(0,0,0,0.05); z-index: 10; display: none; flex-direction: column; transition: background 0.3s; }
 
         h2, h3, h4 { margin: 0 0 0.5rem 0; font-weight: 600; letter-spacing: -0.02em; }
         .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 1rem; display: block; }
 
-        .top-status-bar { background: var(--surface-card); border: 1px solid var(--border-flat); border-radius: 8px; padding: 0.6rem 1rem; margin-bottom: 1rem; font-size: 0.75rem; color: var(--text-secondary); display: flex; justify-content: space-between; align-items: center; }
+        .top-status-bar { background: var(--surface-card); border: 1px solid var(--border-flat); border-radius: 8px; padding: 0.6rem 1rem; margin-bottom: 1rem; font-size: 0.75rem; color: var(--text-secondary); display: flex; justify-content: space-between; align-items: center; transition: background 0.3s, border 0.3s; }
         .server-status-container { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-primary); }
         
         .radio-dot { width: 10px; height: 10px; background-color: var(--flat-success); border-radius: 50%; display: inline-block; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse-green 2s infinite; }
@@ -39,15 +47,15 @@
         @keyframes pulse-red { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
         @keyframes pulse-yellow { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); } }
 
-        .flat-navbar { background: var(--surface-card); border: 1px solid var(--border-flat); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; }
+        .flat-navbar { background: var(--surface-card); border: 1px solid var(--border-flat); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; transition: background 0.3s, border 0.3s; }
         input[type="text"], select { background: var(--bg-main); border: 1px solid var(--border-flat); border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.85rem; color: var(--text-primary); outline: none; }
         input[type="text"]:focus, select:focus { border-color: var(--brand-primary); }
 
         button { background: var(--brand-primary); color: #ffffff; border: none; border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: background 0.15s ease; }
         button:hover { background: var(--brand-primary-hover); }
         button:disabled { background: var(--border-flat); color: var(--text-muted); cursor: not-allowed; }
-        .btn-dark { background: var(--flat-dark); }
-        .btn-dark:hover { background: #334155; }
+        .btn-dark { background: var(--flat-dark); color: var(--bg-main); }
+        .btn-dark:hover { opacity: 0.8; }
         .btn-warning { background: var(--flat-warning); color: #fff; }
         .btn-warning:hover { background: #d97706; }
         .btn-success { background: var(--flat-success); color: #fff; }
@@ -82,14 +90,11 @@
         .diff-missing { border-left: 4px solid var(--flat-danger); opacity: 0.6; }
         .diff-changed { border-left: 4px solid var(--flat-warning); }
 
-        .badge-flat { font-size: 0.7rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: #e2e8f0; color: #334155; text-transform: uppercase; }
-        .badge-danger { background: #fef2f2; color: var(--flat-danger); }
-        .badge-success { background: #ecfdf5; color: var(--flat-success); }
-        .badge-info { background: #f0f9ff; color: var(--brand-primary); }
-        .lbl-added { color: var(--flat-success); font-weight: bold; }
-        .lbl-missing { color: var(--flat-danger); font-weight: bold; }
-        .lbl-changed { color: var(--flat-warning); font-weight: bold; }
-
+        .badge-flat { font-size: 0.7rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: rgba(148, 163, 184, 0.15); color: var(--text-primary); text-transform: uppercase; }
+        .badge-danger { background: rgba(239, 68, 68, 0.15); color: var(--flat-danger); }
+        .badge-success { background: rgba(16, 185, 129, 0.15); color: var(--flat-success); }
+        .badge-info { background: rgba(56, 189, 248, 0.15); color: var(--brand-primary); }
+        
         .metric-widget { background: rgba(255,255,255,0.05); border: 1px solid transparent; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; cursor: pointer; transition: all 0.2s; }
         .metric-widget:hover { background: rgba(255,255,255,0.1); }
         .metric-widget.active { background: rgba(2, 132, 199, 0.2); border-color: var(--brand-primary); }
@@ -111,13 +116,13 @@
         .flat-form-group { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.75rem; }
         .flat-form-group label { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); }
 
-        .alerts-container { position: fixed; bottom: 0; left: calc(280px + 1.5rem); right: 1.5rem; background: var(--surface-card); border: 1px solid var(--border-flat); border-top: 4px solid var(--flat-danger); border-bottom: none; border-radius: 8px 8px 0 0; box-shadow: 0 -10px 30px -5px rgba(0, 0, 0, 0.15); display: none; flex-direction: column; z-index: 1000; overflow: hidden; animation: slideUp 0.3s ease-out; transition: right 0.3s ease; }
+        .alerts-container { position: fixed; bottom: 0; left: calc(280px + 1.5rem); right: 1.5rem; background: var(--surface-card); border: 1px solid var(--border-flat); border-top: 4px solid var(--flat-danger); border-bottom: none; border-radius: 8px 8px 0 0; box-shadow: 0 -10px 30px -5px rgba(0, 0, 0, 0.15); display: none; flex-direction: column; z-index: 1000; overflow: hidden; animation: slideUp 0.3s ease-out; transition: right 0.3s ease, background 0.3s; }
         body.sidebar-open .alerts-container { right: calc(440px + 1.5rem); }
         @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
-        .alerts-header { background: var(--bg-main); padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--border-flat); display: flex; justify-content: space-between; align-items: center; font-weight: 700; color: var(--text-primary); font-size: 0.85rem; text-transform: uppercase; }
+        .alerts-header { background: var(--bg-main); padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--border-flat); display: flex; justify-content: space-between; align-items: center; font-weight: 700; color: var(--text-primary); font-size: 0.85rem; text-transform: uppercase; transition: background 0.3s;}
         .alerts-body { padding: 1.25rem; color: var(--text-primary); min-height: 90px; max-height: 250px; overflow-y: auto; }
-        .alerts-footer { padding: 0.75rem 1.25rem; background: var(--bg-main); border-top: 1px solid var(--border-flat); display: flex; align-items: center; }
+        .alerts-footer { padding: 0.75rem 1.25rem; background: var(--bg-main); border-top: 1px solid var(--border-flat); display: flex; align-items: center; transition: background 0.3s;}
     </style>
 </head>
 <body>
@@ -126,10 +131,12 @@
             
         <div class="sidebar-left">
             <h3 style="color:#ffffff; display:flex; align-items:center; gap:8px;">🛡️ SecOps Core</h3>
+            <span style="display:block; font-size:0.7rem; color:var(--text-muted); margin-top:-6px; margin-bottom:1rem; padding-left:26px;">v2.0.0 Enterprise</span>
             
             <div class="tab-menu">
                 <button class="tab-btn active" onclick="switchTab('dashboard')">Matrix</button>
                 <button class="tab-btn" onclick="switchTab('topology')">Map</button>
+                <button class="tab-btn" onclick="switchTab('analytics')">Insights</button>
             </div>
             
             <span class="section-title">Telemetry Counters</span>
@@ -177,9 +184,10 @@
                     </div>
                 </div>
 
-                <div style="display: flex; gap: 1.5rem; text-align: right;">
-                    <span>External data sources | <strong>Intel Sync Active:</strong> DNS, CISA KEV, DHCP, Nmap</span>
-                    <span id="sync-time">Last Refresh: Loading...</span>
+                <div style="display: flex; gap: 1.5rem; text-align: right; align-items: center;">
+                    <button onclick="toggleTheme()" style="background:transparent; color:var(--text-primary); border:1px solid var(--border-flat); font-size:1rem; padding: 2px 8px;">🌓</button>
+                    <span><strong>Intel Sync:</strong> DNS, CISA KEV, DHCP, Nmap</span>
+                    <span id="sync-time" style="color:var(--text-muted)">Last Refresh: Loading...</span>
                 </div>
             </div>
 
@@ -205,14 +213,32 @@
                     <button class="btn-dark" onclick="drawTopology()" style="font-size:0.75rem;">🔄 Refresh Graph</button>
                 </div>
                 
-                <div style="position: relative; width: 100%; min-height: 600px; flex: 1; border: 1px solid var(--border-flat); border-radius: 8px; background: #ffffff; box-shadow: inset 0 0 10px rgba(0,0,0,0.02); overflow: hidden;">
+                <div style="position: relative; width: 100%; min-height: 600px; flex: 1; border: 1px solid var(--border-flat); border-radius: 8px; background: var(--surface-card); box-shadow: inset 0 0 10px rgba(0,0,0,0.02); overflow: hidden;">
                     <div id="topology-network" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0;"></div>
-                    <div id="topology-loading" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); z-index: 10; justify-content: center; align-items: center; flex-direction: column;">
+                    <div id="topology-loading" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--surface-card); opacity: 0.9; z-index: 10; justify-content: center; align-items: center; flex-direction: column;">
                         <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 12px; font-size: 0.9rem;" id="topology-loading-text">Fetching Telemetry...</div>
                         <div style="width: 250px; height: 6px; background: var(--border-flat); border-radius: 4px; overflow: hidden;">
                             <div id="topology-loading-bar" style="height: 100%; width: 0%; background: var(--brand-primary); transition: width 0.1s ease-out;"></div>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <div id="tab-analytics" class="tab-content">
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
+                    
+                    <div style="background: var(--surface-card); border: 1px solid var(--border-flat); border-radius: 8px; padding: 1.5rem;">
+                        <span class="section-title">Network Infrastructure Trends (Last 10 Scans)</span>
+                        <canvas id="trendChart" style="max-height: 400px; width: 100%;"></canvas>
+                    </div>
+
+                    <div style="background: var(--surface-card); border: 1px solid var(--border-flat); border-radius: 8px; padding: 1.5rem; display: flex; flex-direction: column;">
+                        <span class="section-title">Top Talkers (Layer 2 Bandwidth)</span>
+                        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; margin-top:-0.5rem;">Live traffic intercepted since startup.</div>
+                        <div id="top-talkers-list" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            </div>
+                    </div>
+
                 </div>
             </div>
 
@@ -268,7 +294,7 @@
                     </div>
                     <div class="detail-row" style="flex-direction: column; gap: 4px; margin-top: 0.5rem;">
                         <span class="detail-label">Intercepted DNS Queries</span> 
-                        <div id="diag-dns" style="font-size:0.7rem; color: var(--text-secondary); font-family: monospace; background: #ffffff; padding: 6px; border-radius: 4px; border: 1px solid var(--border-flat); max-height: 80px; overflow-y: auto;"></div>
+                        <div id="diag-dns" style="font-size:0.7rem; color: var(--text-secondary); font-family: monospace; background: var(--surface-card); padding: 6px; border-radius: 4px; border: 1px solid var(--border-flat); max-height: 80px; overflow-y: auto;"></div>
                     </div>
                 </div>
 
@@ -312,7 +338,7 @@
         let baseDevices = [], compareDevices = [], selectedMac = null;
         let activeComputedDisplayList = [], currentFilter = 'all';
         let localAlerts = [], currentAlertIndex = 0, isHiddenAlerts = false, isServerPaused = false;
-        let networkGraph = null;
+        let networkGraph = null, trendChartInstance = null;
 
         window.onload = async () => { 
             const now = new Date();
@@ -331,6 +357,11 @@
             updateScanSchedule(); 
         };
 
+        function toggleTheme() {
+            document.body.classList.toggle('dark-theme');
+            if (trendChartInstance) renderTrendChart(); 
+        }
+
         function switchTab(tabName) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -338,9 +369,53 @@
             document.querySelector(`.tab-btn[onclick="switchTab('${tabName}')"]`).classList.add('active');
             document.getElementById(`tab-${tabName}`).classList.add('active');
 
-            if(tabName === 'topology') {
-                setTimeout(() => { drawTopology(); }, 50);
-            }
+            if(tabName === 'topology') setTimeout(() => { drawTopology(); }, 50);
+            if(tabName === 'analytics') setTimeout(() => { renderTrendChart(); }, 50);
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024, dm = 2, sizes = ['B', 'KB', 'MB', 'GB', 'TB'], i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+        }
+
+        async function renderTrendChart() {
+            try {
+                const res = await fetch('/api/trends');
+                const data = await res.json();
+                if (!data.success) return;
+
+                const labels = data.trends.map(t => t.label);
+                const totalData = data.trends.map(t => t.total);
+                const vulnData = data.trends.map(t => t.vuln);
+
+                const ctx = document.getElementById('trendChart').getContext('2d');
+                const isDark = document.body.classList.contains('dark-theme');
+                const textColor = isDark ? '#cbd5e1' : '#475569';
+                const gridColor = isDark ? '#334155' : '#e2e8f0';
+
+                if (trendChartInstance) trendChartInstance.destroy();
+
+                trendChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: 'Total Infrastructure Assets', data: totalData, borderColor: '#0284c7', backgroundColor: 'rgba(2, 132, 199, 0.1)', borderWidth: 3, fill: true, tension: 0.3 },
+                            { label: 'Vulnerable Assets', data: vulnData, borderColor: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.1)', borderWidth: 3, fill: true, tension: 0.3 }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        color: textColor,
+                        scales: { 
+                            y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor } },
+                            x: { grid: { color: gridColor }, ticks: { color: textColor } }
+                        },
+                        plugins: { legend: { labels: { color: textColor } } }
+                    }
+                });
+            } catch(e) { console.error("Chart render failed", e); }
         }
 
         async function drawTopology() {
@@ -360,54 +435,50 @@
                 if (loadingText) loadingText.innerText = 'Initializing Physics Engine...';
 
                 const container = document.getElementById('topology-network');
+                const graphData = { nodes: new vis.DataSet(data.nodes), edges: new vis.DataSet(data.edges) };
                 
-                const graphData = {
-                    nodes: new vis.DataSet(data.nodes),
-                    edges: new vis.DataSet(data.edges)
-                };
-                
+                const isDark = document.body.classList.contains('dark-theme');
+                const textColor = isDark ? '#f8fafc' : '#0f172a';
+                const strokeColor = isDark ? '#1e293b' : '#ffffff';
+
                 const options = {
                     nodes: { 
                         shape: 'dot', 
                         size: 16, 
                         font: { 
                             size: 12, 
-                            color: '#0f172a', 
+                            color: textColor, 
                             face: 'system-ui',
                             strokeWidth: 4,
-                            strokeColor: '#ffffff'
+                            strokeColor: strokeColor
                         } 
                     },
                     edges: { color: '#cbd5e1', smooth: { type: 'continuous' } },
-                    groups: {
-                        gateway: { color: { background: '#ef4444', border: '#b91c1c' }, font: {color: 'black'} },
-                        device: { color: { background: '#0284c7', border: '#0369a1' } }
-                    },
-                    physics: { 
-                        forceAtlas2Based: { 
-                            gravitationalConstant: -120, 
-                            centralGravity: 0.005, 
-                            springLength: 350,           
-                            springConstant: 0.05,
-                            avoidOverlap: 0.5
-                        }, 
-                        maxVelocity: 50, 
-                        solver: 'forceAtlas2Based', 
-                        timestep: 0.35, 
-                        stabilization: { iterations: 150 } 
-                    }
+                    groups: { gateway: { color: { background: '#ef4444', border: '#b91c1c' }, font: {color: textColor} }, device: { color: { background: '#0284c7', border: '#0369a1' } } },
+                    physics: { forceAtlas2Based: { gravitationalConstant: -120, centralGravity: 0.005, springLength: 350, springConstant: 0.05, avoidOverlap: 0.5 }, maxVelocity: 50, solver: 'forceAtlas2Based', timestep: 0.35, stabilization: { iterations: 150 } }
                 };
                 
                 if (networkGraph) networkGraph.destroy();
                 networkGraph = new vis.Network(container, graphData, options);
-
-                networkGraph.setSize('100%', '100%');
+                
+                networkGraph.setSize('100%', '100%'); 
                 networkGraph.redraw();
+
+                // ---> NEW CODE START: Bind Map Clicks to the Sidebar <---
+                networkGraph.on("selectNode", function(params) {
+                    if (params.nodes.length > 0) {
+                        const clickedNodeId = params.nodes[0];
+                        // Ignore the router, but trigger the sidebar for any MAC address
+                        if (clickedNodeId !== "GATEWAY") {
+                            handleCardClick(clickedNodeId);
+                        }
+                    }
+                });
+                // ---> NEW CODE END <---
 
                 networkGraph.on("stabilizationProgress", function(params) {
                     const widthFactor = params.iterations / params.total;
-                    const percentage = 30 + Math.round(widthFactor * 70);
-                    if (loadingBar) loadingBar.style.width = percentage + '%';
+                    if (loadingBar) loadingBar.style.width = (30 + Math.round(widthFactor * 70)) + '%';
                     if (loadingText) loadingText.innerText = `Calculating Layout (${Math.round(widthFactor * 100)}%)...`;
                 });
 
@@ -420,13 +491,10 @@
 
                 setTimeout(() => {
                     if (loadingOverlay && loadingOverlay.style.display !== 'none') {
-                        loadingOverlay.style.display = 'none';
-                        networkGraph.fit();
+                        loadingOverlay.style.display = 'none'; networkGraph.fit();
                     }
                 }, 3000);
-
             } catch(e) { 
-                console.error("Topology mapping failed.", e); 
                 if (loadingText) loadingText.innerText = 'Failed to map topology.';
                 if (loadingBar) loadingBar.style.background = 'var(--flat-danger)';
                 setTimeout(() => { if (loadingOverlay) loadingOverlay.style.display = 'none'; }, 2000);
@@ -488,26 +556,20 @@
                 
                 if (!data.intel_sync_complete) {
                     syncLabel.innerHTML = "<span style='color: var(--flat-warning);'>⏳ Intel Synchronizing...</span>";
-                    scanBtn.disabled = true;
-                    scanBtn.innerText = "Syncing Intel...";
+                    scanBtn.disabled = true; scanBtn.innerText = "Syncing Intel...";
                 } else {
                     if (syncLabel.innerText.includes("Synchronizing")) {
                         const now = new Date();
                         syncLabel.innerHTML = `Last Refresh: ${now.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} at ${now.toLocaleTimeString()}`;
                     }
                     if (document.getElementById('progress').style.display === "none" || document.getElementById('progress').style.display === "") {
-                        scanBtn.disabled = false;
-                        scanBtn.innerText = "Execute New Audit";
+                        scanBtn.disabled = false; scanBtn.innerText = "Execute New Audit";
                     }
                 }
 
-                if (data.alert_count !== localAlerts.length) {
-                    fetchAlertLedger();
-                } else if (data.alert_count > 0 && isHiddenAlerts) {
-                    document.getElementById('alert-counter').innerText = `${data.alert_count} ALERTS (HIDDEN)` + (isServerPaused ? " & PAUSED" : "");
-                } else if (data.alert_count > 0 && !isHiddenAlerts) {
-                    renderAlertCard();
-                }
+                if (data.alert_count !== localAlerts.length) fetchAlertLedger();
+                else if (data.alert_count > 0 && isHiddenAlerts) document.getElementById('alert-counter').innerText = `${data.alert_count} ALERTS (HIDDEN)` + (isServerPaused ? " & PAUSED" : "");
+                else if (data.alert_count > 0 && !isHiddenAlerts) renderAlertCard();
             } catch(e) {
                 document.getElementById('server-dot').className = "radio-dot offline";
                 document.getElementById('server-status-text').innerText = "Server: Unreachable";
@@ -528,12 +590,8 @@
                         if (!isHiddenAlerts) {
                             currentAlertIndex = localAlerts.length - 1; 
                             renderAlertCard();
-                        } else {
-                            document.getElementById('alert-counter').innerText = `${localAlerts.length} ALERTS (HIDDEN)` + (isServerPaused ? " & PAUSED" : "");
-                        }
-                    } else {
-                        document.getElementById('alerts-container').style.display = 'none';
-                    }
+                        } else document.getElementById('alert-counter').innerText = `${localAlerts.length} ALERTS (HIDDEN)` + (isServerPaused ? " & PAUSED" : "");
+                    } else document.getElementById('alerts-container').style.display = 'none';
                 }
             } catch(e) { }
         }
@@ -548,17 +606,18 @@
             if (currentAlertIndex >= localAlerts.length) currentAlertIndex = localAlerts.length - 1;
             
             const alertItem = localAlerts[currentAlertIndex];
-            
-            let alertTitle = "Unknown Event";
-            let contextText = "An undefined network event occurred.";
-            let riskText = "Unknown impact.";
-            let actionText = "Investigate the MAC address manually.";
+            let alertTitle = "Unknown Event", contextText = "", riskText = "", actionText = "";
 
             if (alertItem.type === "ROGUE_DEVICE_TRAP") {
                 alertTitle = "Uncataloged Hardware Detected";
                 contextText = "A device not present in the current database matrix has broadcasted traffic (DHCP/mDNS) on the interface.";
                 riskText = "May indicate an unauthorized physical connection, a rogue wireless AP, or an unmanaged IoT endpoint introducing vulnerabilities.";
                 actionText = "Verify the MAC address. If authorized, click 'Execute New Audit' to baseline it. If unauthorized, block the MAC at your switch/router.";
+            } else if (alertItem.type === "LATERAL_MOVEMENT_SCAN") {
+                alertTitle = "Port Scan / Lateral Movement";
+                contextText = "Device rapidly firing TCP SYN requests across the subnet.";
+                riskText = "Strong indicator of malware or compromised asset attempting network discovery.";
+                actionText = "Immediately use the Toggle Quarantine action to isolate the device and investigate its logs.";
             }
 
             document.getElementById('alert-body').innerHTML = `
@@ -568,7 +627,7 @@
                         <span style="font-size: 0.75rem; color: var(--text-muted);">🕒 ${alertItem.timestamp}</span>
                     </div>
                     
-                    <div style="font-family:monospace; font-size:0.8rem; padding: 0.4rem 0.6rem; background: #f8fafc; border: 1px solid var(--border-flat); border-radius: 4px; display: flex; gap: 1.5rem;">
+                    <div style="font-family:monospace; font-size:0.8rem; padding: 0.4rem 0.6rem; background: var(--bg-main); border: 1px solid var(--border-flat); border-radius: 4px; display: flex; gap: 1.5rem;">
                         <span><strong>MAC:</strong> ${alertItem.mac}</span>
                         <span><strong>IP:</strong> ${alertItem.ip}</span>
                     </div>
@@ -625,7 +684,7 @@
                 if (data.success && data.history.length > 0) {
                     const pSel = document.getElementById('primary-scan'), cSel = document.getElementById('compare-scan');
                     pSel.innerHTML = data.history.map(h => `<option value="${h}">Base Scan: ${h}</option>`).join('');
-                    cSel.innerHTML = '<option value="none">Time Travel Comparison: None</option>' + data.history.map(h => `<option value="${h}">Compare With: ${h}</option>`).join('');
+                    cSel.innerHTML = '<option value="none">Snapshot Comparison: None</option>' + data.history.map(h => `<option value="${h}">Compare With: ${h}</option>`).join('');
                     if(selectLatestScanId) pSel.value = selectLatestScanId;
                     await loadPrimaryScan();
                 }
@@ -648,8 +707,10 @@
             btn.disabled = true; progress.style.display = "block";
             try {
                 const data = await (await fetch(`/api/scan?subnet=${encodeURIComponent(document.getElementById('subnet-input').value)}`)).json();
-                if (data.success) await refreshHistoryLists(data.scan_id); 
-                else alert(`Scan failed: ${data.error || "Unknown server error."}`);
+                if (data.success) {
+                    await refreshHistoryLists(data.scan_id);
+                    if (document.getElementById('tab-analytics').classList.contains('active')) renderTrendChart();
+                } else alert(`Scan failed: ${data.error || "Unknown server error."}`);
             } catch (error) { alert("Active connection error."); } 
             finally { btn.disabled = false; progress.style.display = "none"; }
         }
@@ -707,6 +768,22 @@
         function renderDevices(displayList) {
             const list = document.getElementById('device-list');
             let filteredList = currentFilter === 'vulnerable' ? displayList.filter(d => d.vulnerabilities && d.vulnerabilities.length > 0) : displayList;
+
+            const topTalkersDiv = document.getElementById('top-talkers-list');
+            if (topTalkersDiv) {
+                let sortedByBandwidth = [...displayList].sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0)).slice(0, 5);
+                topTalkersDiv.innerHTML = sortedByBandwidth.map((d, i) => `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-flat);">
+                        <div style="display:flex; align-items:center; gap:0.5rem;">
+                            <div style="width:24px; height:24px; background:var(--bg-main); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:bold; color:var(--text-secondary)">#${i+1}</div>
+                            <div style="display:flex; flex-direction:column;">
+                                <span style="font-size:0.8rem; font-weight:600;">${d.custom_name || d.hostname || d.ip.split(',')[0]}</span>
+                                <span style="font-size:0.65rem; color:var(--text-muted); font-family:monospace;">${d.mac}</span>
+                            </div>
+                        </div>
+                        <span style="font-size:0.8rem; font-weight:700; color:var(--brand-primary);">${formatBytes(d.bandwidth || 0)}</span>
+                    </div>`).join('') || '<div style="font-size:0.8rem; color:var(--text-muted);">No traffic intercepted yet.</div>';
+            }
 
             if (filteredList.length === 0) {
                 list.innerHTML = `<div style="grid-column: 1 / -1; color: var(--text-muted); text-align: center; padding: 3rem;">No assets match the current filter.</div>`;
@@ -772,11 +849,7 @@
             document.body.classList.add('sidebar-open');
             
             let displayHostname = device.custom_name || device.hostname;
-            if (!displayHostname) {
-                displayHostname = (device.vendor && !device.vendor.includes("Unknown") && !device.vendor.includes("Private")) 
-                    ? device.vendor 
-                    : device.ip.split(',')[0];
-            }
+            if (!displayHostname) displayHostname = (device.vendor && !device.vendor.includes("Unknown") && !device.vendor.includes("Private")) ? device.vendor : device.ip.split(',')[0];
             
             document.getElementById('diag-title').innerText = displayHostname;
             document.getElementById('diag-hardware-specs').innerText = `MAC Reference: ${device.mac} | Current IP: ${device.ip}`;
@@ -785,16 +858,12 @@
             document.getElementById('edit-tags').value = device.tags || "";
             document.getElementById('edit-icon').value = device.icon_override || "";
             
-            // Populate Deep-Dive Telemetry
             document.getElementById('diag-dhcp').innerText = device.dhcp_prl || 'No DHCP data captured';
             document.getElementById('diag-mdns').innerText = device.mdns_txt || 'No mDNS records found';
             
             const dnsDiv = document.getElementById('diag-dns');
-            if (device.dns_history && device.dns_history.length > 0) {
-                dnsDiv.innerHTML = device.dns_history.join('<br>');
-            } else {
-                dnsDiv.innerText = 'No queries intercepted';
-            }
+            if (device.dns_history && device.dns_history.length > 0) dnsDiv.innerHTML = device.dns_history.join('<br>');
+            else dnsDiv.innerText = 'No queries intercepted';
             
             const reportDiv = document.getElementById('vuln-report-section');
             reportDiv.innerHTML = ""; 
@@ -821,8 +890,7 @@
         function saveDeviceDetails() {
             const mac = document.getElementById('edit-mac').value;
             fetch(`/api/device/${mac}/update`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ custom_name: document.getElementById('edit-name').value, tags: document.getElementById('edit-tags').value, icon_override: document.getElementById('edit-icon').value })
             }).then(res => {
                 if(res.ok) fetch(`/api/devices?scan_id=${encodeURIComponent(document.getElementById('primary-scan').value)}`).then(r => r.json()).then(data => {
@@ -833,7 +901,7 @@
 
         function exportCurrentScanMetrics() {
             if (!activeComputedDisplayList || activeComputedDisplayList.length === 0) return alert("Cannot export an empty matrix layout.");
-            const payload = { meta: { generated_at: new Date().toISOString(), primary_baseline_scan: document.getElementById('primary-scan').value }, topology_assets: activeComputedDisplayList };
+            const payload = { meta: { generated_at: new Date().toISOString(), primary_baseline_scan: document.getElementById('primary-scan').value, platform_version: "v2.0.0" }, topology_assets: activeComputedDisplayList };
             const a = document.createElement('a');
             a.href = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload, null, 4));
             a.download = `secops_audit_log_${document.getElementById('primary-scan').value.replace(/[: ]/g, '_')}.json`;
