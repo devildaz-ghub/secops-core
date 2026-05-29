@@ -1,45 +1,57 @@
-# 🛡️ SecOps Core | ITAM & Network Security Dashboard
+# 🛡️ SecOps Core | Enterprise ITAM & Network Security Dashboard
 
-SecOps Core is a lightweight, self-hosted IT Asset Management (ITAM) and Intrusion Prevention System (IPS). It combines passive network telemetry, active Nmap fingerprinting, and real-time vulnerability cross-referencing into a single, interactive dashboard.
+![Version](https://img.shields.io/badge/version-v2.0.0-blue.svg)
+![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen.svg)
+![Docker](https://img.shields.io/badge/docker-ready-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-## ✨ Features
+**SecOps Core** is a lightweight, self-hosted IT Asset Management (ITAM) and active Intrusion Prevention System (IPS). It combines passive network telemetry, active Nmap fingerprinting, real-time vulnerability cross-referencing, and active containment into a single, interactive dashboard.
 
-* **Passive Network Sniffing:** Silently monitors DHCP and mDNS traffic to catalog hidden devices (Smart TVs, IoT hardware, consoles) without triggering active alarms.
-* **Interactive Topology Map:** A physics-based network graph mapping your entire subnet ecosystem.
-* **Active Vulnerability Auditing:** Cross-references open ports against the official CISA Known Exploited Vulnerabilities (KEV) catalog.
-* **Intrusion Prevention (ARP Quarantine):** Actively isolates rogue assets using localized ARP poisoning.
-* **Webhooks:** Pushes real-time alerts to Discord/Slack when unauthorized devices connect to the network.
+---
 
-## 🚀 Deployment (Docker)
+## ✨ Key Features
 
-Because SecOps Core requires raw network socket access (for packet sniffing and ARP spoofing) and OS-level tools like Nmap, Docker is the recommended deployment method.
+### 📡 Passive Telemetry & Fingerprinting
+* **Silent Device Discovery:** Passively monitors DHCP, DNS, and mDNS traffic to catalog hidden devices (Smart TVs, IoT hardware, consoles) without triggering active alarms.
+* **Deep-Dive Signatures:** Extracts DHCP Parameter Request Lists (PRL) and mDNS TXT records to accurately profile hardware.
+* **Interactive Topology Map:** A physics-based network graph mapping your entire subnet ecosystem. Click any node to instantly view its diagnostics.
 
-1. **Clone the repository:**
-   
-   git clone [https://github.com/YOUR_USERNAME/secops-core.git](https://github.com/YOUR_USERNAME/secops-core.git)
-   cd secops-core
+### ⚔️ Active Defense & Remediation (IPS)
+* **ARP Quarantine:** Actively isolates rogue assets or infected nodes using localized ARP poisoning, effectively blackholing their network access instantly.
+* **Wake-on-LAN (WoL):** Triggers Layer-3 UDP directed broadcasts to wake sleeping assets for patching or scanning.
 
-2. Configure your Subnet:
-    Open docker-compose.yml and update the TARGET_SUBNET environment variable to match your local network (e.g., 192.168.1.0/24).
+### 🛡️ Threat Intelligence & Alerting
+* **CISA KEV Correlation:** Actively cross-references open ports against the official CISA Known Exploited Vulnerabilities catalog.
+* **Lateral Movement Detection:** Tracks TCP SYN requests and triggers alerts if a compromised node attempts rapid internal port scanning or network discovery.
+* **Real-Time Webhooks:** Pushes critical alerts directly to Discord, Slack, or MS Teams.
 
-3. Deploy the stack:
+---
 
-   docker-compose up -d --build
+## 🚀 What's New in v2.0.0 (Enterprise Update)
 
-4. Access the Dashboard:
-    Open your browser and navigate to http://localhost:13000.
+The v2.0.0 release transitions SecOps Core from a homelab utility to an enterprise-grade platform:
 
-⚠️ Disclaimer & Ethical Use
+* **Prometheus Metrics Pipeline:** Exposes a standard `/metrics` endpoint for Grafana integration (`secops_devices_total`, `secops_vulnerable_total`, etc.).
+* **SIEM Integration:** Native Syslog forwarding to stream network alerts directly to Splunk, Elastic, or Graylog.
+* **Layer-2 Bandwidth Analytics:** A real-time "Top Talkers" widget tracking which devices are consuming the most local traffic (helpful for detecting data exfiltration).
+* **Historical Trend Charting:** Interactive Chart.js graphs mapping infrastructure scale and vulnerability counts over the last 10 audits.
+* **Dark Mode & UI Overhaul:** Dynamic theme toggling and a new dedicated Analytics tab.
 
-This tool includes active network disruption capabilities (ARP Poisoning).
-The "Toggle Isolation" feature executes a localized Denial of Service attack against the target MAC address.
+---
 
-    Do NOT run this software on corporate, public, or educational networks without explicit written authorization from the network owner.
+## 🛠️ Architecture & Tech Stack
 
-    This software is provided for educational, homelab, and authorized defensive operations only. The authors are not responsible for network outages or damages caused by misuse.
+* **Backend:** Python 3.10, FastAPI, Scapy, python-nmap, SQLite3.
+* **Frontend:** HTML5, CSS3, Vanilla JavaScript, Vis.js (Topology Graph), Chart.js.
+* **Deployment:** Docker & Docker Compose (Host Network Mode).
 
-🛠️ Tech Stack
+---
 
-    Backend: Python 3.10, FastAPI, Scapy, python-nmap, SQLite
+## 📦 Deployment (Docker)
 
-    Frontend: HTML5, CSS3, Vanilla JavaScript, Vis.js (Topology Graph)
+Because SecOps Core requires raw network socket access (for packet sniffing and ARP spoofing) and OS-level tools like Nmap, Docker is the required deployment method.
+
+### 1. Clone the repository
+```bash
+git clone [https://github.com/YOUR_USERNAME/secops-core.git](https://github.com/YOUR_USERNAME/secops-core.git)
+cd secops-core
