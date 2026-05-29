@@ -20,6 +20,37 @@ Because this tool performs raw packet manipulation and deep network interrogatio
 ## 🚀 Quick Start
 
 1. **Clone the repository:**
-   ```bash
-   git clone [https://github.com/YOUR_USERNAME/secops-core.git](https://github.com/YOUR_USERNAME/secops-core.git)
+
+    git clone [https://github.com/YOUR_USERNAME/secops-core.git](https://github.com/YOUR_USERNAME/secops-core.git)
    cd secops-core
+   
+3. Install Python dependencies:
+    Bash
+
+    pip install -r requirements.txt
+
+    Run the Engine:
+
+        Linux/Mac: sudo python3 server.py
+
+        Windows: Open Admin PowerShell and run: python server.py
+
+    Access the Dashboard:
+    Open your browser and navigate to http://localhost:13000
+
+🐳 Docker Deployment
+
+To run as a container, ensure you bind to the host network and provide raw packet sniffing privileges:
+Bash
+
+docker run -d \
+  --name secops-core \
+  --network host \
+  --privileged \
+  -e DB_PATH=/data/network_state.db \
+  -v /your/local/folder:/data \
+  your-image-name:latest
+
+⚠️ Disclaimer
+
+This tool is for educational and authorized internal network auditing only. Do not deploy this scanner on networks where you do not have explicit authorization to perform active reconnaissance.
