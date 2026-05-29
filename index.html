@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecOps Core | Network Security Matrix</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <style>
+        :root {
+            --bg-main: #f8fafc; --surface-card: #ffffff; --text-primary: #0f172a; --text-secondary: #475569;
+            --text-muted: #94a3b8; --border-flat: #e2e8f0; --border-active: #cbd5e1; --brand-primary: #0284c7;
+            --brand-primary-hover: #0369a1; --flat-success: #10b981; --flat-danger: #ef4444; --flat-warning: #f59e0b;
+            --flat-info: #38bdf8; --flat-dark: #1e293b;
+        }
+
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg-main); color: var(--text-primary); margin: 0; padding: 0; height: 100vh; overflow: hidden; box-sizing: border-box; }
+        *, *::before, *::after { box-sizing: border-box; }
+
+        .app-container { display: flex; width: 100%; height: 100vh; }
+        .sidebar-left { width: 280px; flex-shrink: 0; background: #1e293b; color: #f8fafc; padding: 1.5rem; border-right: 1px solid rgba(255,255,255,0.1); overflow-y: auto; }
+        .main-canvas { flex: 1; padding: 1.5rem; overflow-y: auto; position: relative; }
+        .sidebar-right { width: 440px; flex-shrink: 0; background: var(--surface-card); padding: 1.5rem; border-left: 1px solid var(--border-flat); overflow-y: auto; box-shadow: -4px 0 15px rgba(0,0,0,0.03); z-index: 10; display: none; flex-direction: column; }
+
+        h2, h3, h4 { margin: 0 0 0.5rem 0; font-weight: 600; letter-spacing: -0.02em; }
+        .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 1rem; display: block; }
+
+        .top-status-bar { background: var(--surface-card); border: 1px solid var(--border-flat); border-radius: 8px; padding: 0.6rem 1rem; margin-bottom: 1rem; font-size: 0.75rem; color: var(--text-secondary); display: flex; justify-content: space-between; align-items: center; }
+        .server-status-container { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-primary); }
+        
+        .radio-dot { width: 10px; height: 10px; background-color: var(--flat-success); border-radius: 50%; display: inline-block; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse-green 2s infinite; }
+        .radio-dot.offline { background-color: var(--flat-danger); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); animation: pulse-red 2s infinite; }
+        .radio-dot.connecting { background-color: var(--text-muted); box-shadow: none; animation: none; }
+        .radio-dot.paused { background-color: var(--flat-warning); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); animation: pulse-yellow 2s infinite; }
+
+        @keyframes pulse-green { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
+        @keyframes pulse-red { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
+        @keyframes pulse-yellow { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); } }
+
+        .flat-navbar { background: var(--surface-card); border: 1px solid var(--border-flat); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; }
+        input[type="text"], select { background: var(--bg-main); border: 1px solid var(--border-flat); border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.85rem; color: var(--text-primary); outline: none; }
+        input[type="text"]:focus, select:focus { border-color: var(--brand-primary); }
+
+        button { background: var(--brand-primary); color: #ffffff; border: none; border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: background 0.15s ease; }
+        button:hover { background: var(--brand-primary-hover); }
+        button:disabled { background: var(--border-flat); color: var(--text-muted); cursor: not-allowed; }
+        .btn-dark { background: var(--flat-dark); }
+        .btn-dark:hover { background: #334155; }
+        .btn-warning { background: var(--flat-warning); color: #fff; }
+        .btn-warning:hover { background: #d97706; }
+        .btn-success { background: var(--flat-success); color: #fff; }
+        .btn-success:hover { background: #059669; }
+        .btn-danger { background: var(--flat-danger); color: #fff; }
+        .btn-danger:hover { background: #dc2626; }
+
+        #device-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; padding-bottom: 24rem; }
+
+        .device-card { background: var(--surface-card); border: 1px solid var(--border-flat); border-radius: 8px; padding: 1.25rem; cursor: pointer; display: flex; flex-direction: column; gap: 0.75rem; transition: all 0.15s ease-in-out; position: relative; }
+        .device-card:hover { border-color: var(--border-active); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); }
+        .device-card.selected { border-color: var(--brand-primary); box-shadow: 0 0 0 2px var(--brand-primary); }
+
+        .card-header { display: flex; gap: 0.75rem; align-items: flex-start; }
+        .card-icon { font-size: 1.75rem; line-height: 1; }
+        .card-title .name { font-weight: 600; font-size: 0.95rem; }
+        
+        .card-details { display: flex; flex-direction: column; gap: 0.25rem; }
+        .detail-row { display: flex; justify-content: space-between; font-family: monospace; font-size: 0.85rem; }
+        .detail-label { color: var(--text-muted); font-size: 0.75rem; }
+        .detail-val { font-weight: 600; }
+
+        .card-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid var(--border-flat); }
+        .diff-added { border-left: 4px solid var(--flat-success); }
+        .diff-missing { border-left: 4px solid var(--flat-danger); opacity: 0.6; }
+        .diff-changed { border-left: 4px solid var(--flat-warning); }
+
+        .badge-flat { font-size: 0.7rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: #e2e8f0; color: #334155; text-transform: uppercase; }
+        .badge-danger { background: #fef2f2; color: var(--flat-danger); }
+        .badge-success { background: #ecfdf5; color: var(--flat-success); }
+        .badge-info { background: #f0f9ff; color: var(--brand-primary); }
+        .lbl-added { color: var(--flat-success); font-weight: bold; }
+        .lbl-missing { color: var(--flat-danger); font-weight: bold; }
+        .lbl-changed { color: var(--flat-warning); font-weight: bold; }
+
+        .metric-widget { background: rgba(255,255,255,0.05); border: 1px solid transparent; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; cursor: pointer; transition: all 0.2s; }
+        .metric-widget:hover { background: rgba(255,255,255,0.1); }
+        .metric-widget.active { background: rgba(2, 132, 199, 0.2); border-color: var(--brand-primary); }
+        .metric-val { font-size: 1.5rem; font-weight: 700; color: #ffffff; pointer-events: none; }
+        .metric-lbl { font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; pointer-events: none; }
+
+        .flat-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.8rem; }
+        .flat-table th, .flat-table td { border-bottom: 1px solid var(--border-flat); padding: 8px 6px; text-align: left; }
+        .flat-table th { color: var(--text-secondary); font-weight: 600; background: var(--bg-main); }
+        
+        .sev-crit { color: #ffffff; background: #7f1d1d; padding: 2px 4px; border-radius: 3px; font-weight: bold; }
+        .sev-high { color: #ffffff; background: var(--flat-danger); padding: 2px 4px; border-radius: 3px; font-weight: bold; }
+        .sev-info { color: var(--brand-primary); background: #f0f9ff; padding: 2px 4px; border-radius: 3px; font-weight: bold; }
+
+        .progress-line { height: 3px; background: var(--border-flat); overflow: hidden; display: none; margin-top: 0.5rem; border-radius: 2px; }
+        .progress-fill { height: 100%; width: 40%; background: var(--brand-primary); animation: slide 1.2s infinite linear; }
+        @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+
+        .flat-form-group { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.75rem; }
+        .flat-form-group label { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); }
+
+        .alerts-container { position: fixed; bottom: 0; left: calc(280px + 1.5rem); right: 1.5rem; background: var(--surface-card); border: 1px solid var(--border-flat); border-top: 4px solid var(--flat-danger); border-bottom: none; border-radius: 8px 8px 0 0; box-shadow: 0 -10px 30px -5px rgba(0, 0, 0, 0.15); display: none; flex-direction: column; z-index: 1000; overflow: hidden; animation: slideUp 0.3s ease-out; transition: right 0.3s ease; }
+        body.sidebar-open .alerts-container { right: calc(440px + 1.5rem); }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+        .alerts-header { background: var(--bg-main); padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--border-flat); display: flex; justify-content: space-between; align-items: center; font-weight: 700; color: var(--text-primary); font-size: 0.85rem; text-transform: uppercase; }
+        .alerts-body { padding: 1.25rem; color: var(--text-primary); min-height: 90px; max-height: 250px; overflow-y: auto; }
+        .alerts-footer { padding: 0.75rem 1.25rem; background: var(--bg-main); border-top: 1px solid var(--border-flat); display: flex; align-items: center; }
+    </style>
+</head>
+<body>
+
+    <div class="app-container">
+            
+        <div class="sidebar-left">
+            <h3 style="color:#ffffff; margin-bottom:1.5rem; display:flex; align-items:center; gap:8px;">🛡️ SecOps Core</h3>
+            
+            <span class="section-title">Telemetry Counters</span>
+            
+            <div class="metric-widget active" id="filter-all" onclick="setFilter('all')">
+                <div class="metric-val" id="count-total">-</div>
+                <div class="metric-lbl">Monitored Assets</div>
+            </div>
+            
+            <div class="metric-widget" id="filter-risk" onclick="setFilter('vulnerable')">
+                <div class="metric-val" id="count-risk" style="color:var(--flat-warning);">-</div>
+                <div class="metric-lbl">Vulnerable Nodes</div>
+            </div>
+
+            <div style="margin-top:2rem;">
+                <span class="section-title">Subnet Control</span>
+                
+                <label for="subnet-input" style="font-size:0.7rem; color:var(--text-muted);">Target IP Range</label>
+                <input type="text" id="subnet-input" value="192.168.1.0/24" onchange="updateScanSchedule()" style="width:100%; background:rgba(255,255,255,0.1); border:none; color:white; margin-bottom:0.75rem;">
+                
+                <label for="auto-scan-interval" style="font-size:0.7rem; color:var(--text-muted);">Auto-Scan Schedule</label>
+                <select id="auto-scan-interval" onchange="updateScanSchedule()" style="width:100%; background:rgba(255,255,255,0.1); border:none; color:white; padding:0.5rem 0.75rem; border-radius:6px; margin-bottom:1rem; outline:none;">
+                    <option value="0" style="color: black;">Manual Only (Disabled)</option>
+                    <option value="5" style="color: black;">Every 5 Minutes</option>
+                    <option value="10" style="color: black;">Every 10 Minutes</option>
+                    <option value="15" selected style="color: black;">Every 15 Minutes</option>
+                    <option value="30" style="color: black;">Every 30 Minutes</option>
+                    <option value="60" style="color: black;">Every 1 Hour</option>
+                </select>
+
+                <button id="scan-btn" onclick="startScan()" style="width:100%;">Execute New Audit</button>
+                <div class="progress-line" id="progress"><div class="progress-fill"></div></div>
+            </div>
+        </div>
+
+        <div class="main-canvas">
+
+            <div class="top-status-bar">
+                <div style="display: flex; gap: 1.5rem;">
+                    <div class="server-status-container">
+                        <span class="radio-dot connecting" id="server-dot"></span>
+                        <span id="server-status-text">Server: Connecting...</span>
+                    </div>
+                    <div class="server-status-container">
+                        <span class="radio-dot connecting" id="ids-dot"></span>
+                        <span id="ids-status-text">Engine: Standby</span>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 1.5rem; text-align: right;">
+                    <span>External data sources | <strong>Intel Sync Active:</strong> IEEE MAC OUI, CISA KEV, Local DHCP, Nmap Fingerprinting</span>
+                    <span id="sync-time">Last Refresh: Loading...</span>
+                </div>
+            </div>
+
+            <div class="flat-navbar">
+                <div style="display: flex; gap: 0.5rem;">
+                    <select id="primary-scan" onchange="loadPrimaryScan()" style="min-width:200px;"></select>
+                    <select id="compare-scan" onchange="calculateNetworkDiff()" style="min-width:200px;"></select>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <select id="sort-select" onchange="calculateNetworkDiff()" style="min-width:160px;"></select>
+                    <button class="btn-dark" onclick="exportCurrentScanMetrics()">Export Audit Log</button>
+                </div>
+            </div>
+
+            <span class="section-title">Discovered Infrastructure Target Matrix</span>
+            <div id="device-list"></div>
+
+            <div class="alerts-container" id="alerts-container">
+                <div class="alerts-header">
+                    <span>🚨 Network Alerts</span>
+                    <span id="alert-counter" style="color: var(--flat-danger); font-size:0.75rem;">0 of 0</span>
+                </div>
+                <div class="alerts-body" id="alert-body"></div>
+                <div class="alerts-footer">
+                    <div id="alert-nav-buttons" style="display: flex; gap: 0.5rem;">
+                        <button onclick="prevAlert()" id="btn-prev" class="btn-dark" style="padding: 0.4rem 0.75rem; font-size: 0.75rem;">◀ Prev</button>
+                        <button onclick="nextAlert()" id="btn-next" class="btn-dark" style="padding: 0.4rem 0.75rem; font-size: 0.75rem;">Next ▶</button>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-left: auto;">
+                        <button onclick="togglePause()" id="btn-pause" class="btn-warning" style="padding: 0.4rem 0.75rem; font-size: 0.75rem;">⏸ Pause</button>
+                        <button onclick="toggleHide()" id="btn-hide" class="btn-dark" style="padding: 0.4rem 0.75rem; font-size: 0.75rem;">Hide Alerts</button>
+                        <button onclick="clearAllAlerts()" id="btn-clear" class="btn-danger" style="padding: 0.4rem 0.75rem; font-size: 0.75rem;">Clear All</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar-right" id="sidebar-right">
+            <div id="diagnostics-panel" style="display:flex; flex-direction:column; gap:1.5rem; height:100%;">
+                
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div>
+                        <span class="section-title">Asset Diagnostics</span>
+                        <h2 id="diag-title" style="margin-bottom:0.25rem;">Target Profile</h2>
+                    </div>
+                    <button onclick="closeSidebar()" class="btn-dark" style="padding: 0.35rem 0.6rem; font-size: 0.75rem;">✕ Close</button>
+                </div>
+                
+                <div id="diag-hardware-specs" style="font-family:monospace; font-size:0.75rem; color:var(--text-secondary); margin-top:-1rem;"></div>
+
+                <div id="vuln-report-section"></div>
+
+                <div style="background:var(--bg-main); border:1px solid var(--border-flat); border-radius:8px; padding:1rem; margin-top:auto;">
+                    <span class="section-title" style="margin-bottom:0.75rem;">Modify Asset Profile</span>
+                    <input type="hidden" id="edit-mac">
+                    
+                    <div class="flat-form-group">
+                        <label for="edit-name">Identity Label Override</label>
+                        <input type="text" id="edit-name">
+                    </div>
+                    
+                    <div class="flat-form-group">
+                        <label for="edit-tags">Compliance Policy Tags</label>
+                        <input type="text" id="edit-tags">
+                    </div>
+                    
+                    <div class="flat-form-group">
+                        <label for="edit-icon">Display Profile Asset Icon</label>
+                        <select id="edit-icon">
+                            <option value="">Auto-Detect via Vendor</option>
+                            <option value="💻">Workstation (💻)</option>
+                            <option value="📱">Mobile Node (📱)</option>
+                            <option value="📺">Smart Display/TV (📺)</option>
+                            <option value="🌐">Core Switch/Gateway (🌐)</option>
+                            <option value="🎮">Gaming Hardware (🎮)</option>
+                            <option value="🖨️">Peripheral / Printer (🖨️)</option>
+                            <option value="🔒">Hardened Target (🔒)</option>
+                            <option value="❓">Generic Endpoint (❓)</option>
+                        </select>
+                    </div>
+                    
+                    <button onclick="saveDeviceDetails()" style="width:100%; margin-top:0.5rem;">Apply Profile Changes</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        let baseDevices = [], compareDevices = [], selectedMac = null;
+        let activeComputedDisplayList = [], currentFilter = 'all';
+        let localAlerts = [], currentAlertIndex = 0, isHiddenAlerts = false, isServerPaused = false;
+
+        window.onload = async () => { 
+            const now = new Date();
+            document.getElementById('sync-time').innerText = `Last Refresh: ${now.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} at ${now.toLocaleTimeString()}`;
+
+            document.getElementById('sort-select').innerHTML = 
+                '<option value="ip">Sort By: IP Address</option>' +
+                '<option value="mac">Sort By: MAC Address</option>' +
+                '<option value="alphabetical">Sort By: Name (A-Z)</option>' +
+                '<option value="manufacturer">Sort By: Manufacturer</option>' +
+                '<option value="detected">Sort By: Operational State</option>';
+            
+            await refreshHistoryLists(); 
+            pollHeartbeat(); 
+            setInterval(pollHeartbeat, 4000); 
+            updateScanSchedule(); 
+        };
+
+        function setFilter(type) {
+            currentFilter = type;
+            document.getElementById('filter-all').classList.toggle('active', type === 'all');
+            document.getElementById('filter-risk').classList.toggle('active', type === 'vulnerable');
+            if (activeComputedDisplayList.length > 0) renderDevices(activeComputedDisplayList);
+        }
+
+        function updateScanSchedule() {
+            const mins = parseInt(document.getElementById('auto-scan-interval').value);
+            const subnet = document.getElementById('subnet-input').value;
+            fetch('/api/scan/schedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ interval_minutes: mins, subnet: subnet }) }).catch(() => {});
+        }
+
+        async function pollHeartbeat() {
+            try {
+                const res = await fetch('/api/heartbeat');
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                
+                document.getElementById('server-dot').className = "radio-dot";
+                document.getElementById('server-status-text').innerText = "Server: Connected";
+
+                if (data.paused) {
+                    document.getElementById('ids-dot').className = "radio-dot paused";
+                    document.getElementById('ids-status-text').innerText = "Engine: Paused";
+                    isServerPaused = true;
+                    document.getElementById('btn-pause').innerHTML = "▶ Resume";
+                    document.getElementById('btn-pause').classList.replace('btn-warning', 'btn-success');
+                } else {
+                    document.getElementById('ids-dot').className = "radio-dot";
+                    document.getElementById('ids-status-text').innerText = "Engine: Active";
+                    isServerPaused = false;
+                    document.getElementById('btn-pause').innerHTML = "⏸ Pause";
+                    document.getElementById('btn-pause').classList.replace('btn-success', 'btn-warning');
+                }
+
+                const syncLabel = document.getElementById('sync-time');
+                const scanBtn = document.getElementById('scan-btn');
+                
+                if (!data.intel_sync_complete) {
+                    syncLabel.innerHTML = "<span style='color: var(--flat-warning);'>⏳ Intel Synchronizing...</span>";
+                    scanBtn.disabled = true;
+                    scanBtn.innerText = "Syncing Intel...";
+                } else {
+                    if (syncLabel.innerText.includes("Synchronizing")) {
+                        const now = new Date();
+                        syncLabel.innerHTML = `Last Refresh: ${now.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} at ${now.toLocaleTimeString()}`;
+                    }
+                    if (document.getElementById('progress').style.display === "none" || document.getElementById('progress').style.display === "") {
+                        scanBtn.disabled = false;
+                        scanBtn.innerText = "Execute New Audit";
+                    }
+                }
+
+                if (data.alert_count !== localAlerts.length) {
+                    fetchAlertLedger();
+                } else if (data.alert_count > 0 && isHiddenAlerts) {
+                    document.getElementById('alert-counter').innerText = `${data.alert_count} ALERTS (HIDDEN)` + (isServerPaused ? " & PAUSED" : "");
+                } else if (data.alert_count > 0 && !isHiddenAlerts) {
+                    renderAlertCard();
+                }
+            } catch(e) {
+                document.getElementById('server-dot').className = "radio-dot offline";
+                document.getElementById('server-status-text').innerText = "Server: Unreachable";
+                document.getElementById('ids-dot').className = "radio-dot offline";
+                document.getElementById('ids-status-text').innerText = "Engine: Offline";
+            }
+        }
+
+        async function fetchAlertLedger() {
+            try {
+                const res = await fetch('/api/passive_alerts');
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.success) {
+                    localAlerts = data.alerts;
+                    if (localAlerts.length > 0) {
+                        document.getElementById('alerts-container').style.display = 'flex';
+                        if (!isHiddenAlerts) {
+                            currentAlertIndex = localAlerts.length - 1; 
+                            renderAlertCard();
+                        } else {
+                            document.getElementById('alert-counter').innerText = `${localAlerts.length} ALERTS (HIDDEN)` + (isServerPaused ? " & PAUSED" : "");
+                        }
+                    } else {
+                        document.getElementById('alerts-container').style.display = 'none';
+                    }
+                }
+            } catch(e) { }
+        }
+
+        function renderAlertCard() {
+            if (localAlerts.length === 0) {
+                document.getElementById('alert-body').innerHTML = '<div style="font-size: 0.9rem; color: var(--text-muted);">No active network alerts.</div>';
+                document.getElementById('alert-counter').innerText = isServerPaused ? "0 of 0 (PAUSED)" : "0 of 0";
+                return;
+            }
+            if (isHiddenAlerts) return;
+            if (currentAlertIndex >= localAlerts.length) currentAlertIndex = localAlerts.length - 1;
+            
+            const alertItem = localAlerts[currentAlertIndex];
+            
+            let alertTitle = "Unknown Event";
+            let contextText = "An undefined network event occurred.";
+            let riskText = "Unknown impact.";
+            let actionText = "Investigate the MAC address manually.";
+
+            if (alertItem.type === "ROGUE_DEVICE_TRAP") {
+                alertTitle = "Uncataloged Hardware Detected";
+                contextText = "A device not present in the current database matrix has broadcasted traffic (DHCP/mDNS) on the interface.";
+                riskText = "May indicate an unauthorized physical connection, a rogue wireless AP, or an unmanaged IoT endpoint introducing vulnerabilities.";
+                actionText = "Verify the MAC address. If authorized, click 'Execute New Audit' to baseline it. If unauthorized, block the MAC at your switch/router.";
+            }
+
+            document.getElementById('alert-body').innerHTML = `
+                <div style="font-size: 0.85rem; line-height: 1.4; display: flex; flex-direction: column; gap: 0.5rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-flat); padding-bottom: 4px;">
+                        <strong style="color: var(--flat-danger); font-size: 0.9rem;">${alertTitle}</strong>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">🕒 ${alertItem.timestamp}</span>
+                    </div>
+                    
+                    <div style="font-family:monospace; font-size:0.8rem; padding: 0.4rem 0.6rem; background: #f8fafc; border: 1px solid var(--border-flat); border-radius: 4px; display: flex; gap: 1.5rem;">
+                        <span><strong>MAC:</strong> ${alertItem.mac}</span>
+                        <span><strong>IP:</strong> ${alertItem.ip}</span>
+                    </div>
+
+                    <div style="background: rgba(239, 68, 68, 0.04); border-left: 3px solid var(--flat-danger); padding: 0.5rem 0.75rem; border-radius: 0 4px 4px 0;">
+                        <div style="margin-bottom: 0.3rem;"><strong style="color:var(--text-primary);">Context:</strong> <span style="color:var(--text-secondary);">${contextText}</span></div>
+                        <div style="margin-bottom: 0.3rem;"><strong style="color:var(--text-primary);">Risk:</strong> <span style="color:var(--text-secondary);">${riskText}</span></div>
+                        <div><strong style="color:var(--text-primary);">Action:</strong> <span style="color:var(--text-secondary);">${actionText}</span></div>
+                    </div>
+                </div>`;
+            
+            document.getElementById('alert-counter').innerText = `${currentAlertIndex + 1} of ${localAlerts.length}` + (isServerPaused ? " (PAUSED)" : "");
+            document.getElementById('btn-prev').disabled = (currentAlertIndex === 0);
+            document.getElementById('btn-next').disabled = (currentAlertIndex === localAlerts.length - 1);
+        }
+
+        function nextAlert() { if (currentAlertIndex < localAlerts.length - 1) { currentAlertIndex++; renderAlertCard(); } }
+        function prevAlert() { if (currentAlertIndex > 0) { currentAlertIndex--; renderAlertCard(); } }
+
+        async function togglePause() {
+            try {
+                await fetch(`/api/passive_alerts/${isServerPaused ? 'resume' : 'pause'}`, { method: 'POST' });
+                pollHeartbeat(); 
+            } catch (e) {}
+        }
+
+        function toggleHide() {
+            isHiddenAlerts = !isHiddenAlerts;
+            const elements = ['btn-hide', 'alert-body', 'alert-nav-buttons', 'btn-clear', 'btn-pause', 'alert-counter'].map(id => document.getElementById(id));
+            if (isHiddenAlerts) {
+                elements[0].innerText = "Show Alerts"; elements[0].classList.replace('btn-dark', 'btn-warning');
+                elements[1].style.display = elements[2].style.display = elements[3].style.display = elements[4].style.display = "none";
+                elements[5].innerText = `${localAlerts.length} ALERTS (HIDDEN)` + (isServerPaused ? " & PAUSED" : "");
+                elements[5].style.color = "var(--flat-warning)";
+            } else {
+                elements[0].innerText = "Hide Alerts"; elements[0].classList.replace('btn-warning', 'btn-dark');
+                elements[1].style.display = "block"; elements[2].style.display = "flex"; elements[3].style.display = elements[4].style.display = "block";
+                elements[5].style.color = "var(--flat-danger)";
+                if (localAlerts.length > 0) currentAlertIndex = localAlerts.length - 1; 
+                renderAlertCard();
+            }
+        }
+
+        async function clearAllAlerts() {
+            await fetch('/api/passive_alerts/clear', { method: 'POST' });
+            localAlerts = []; currentAlertIndex = 0;
+            document.getElementById('alerts-container').style.display = 'none';
+            pollHeartbeat(); 
+        }
+
+        async function refreshHistoryLists(selectLatestScanId = null) {
+            try {
+                const data = await (await fetch('/api/scan_history')).json();
+                if (data.success && data.history.length > 0) {
+                    const pSel = document.getElementById('primary-scan'), cSel = document.getElementById('compare-scan');
+                    pSel.innerHTML = data.history.map(h => `<option value="${h}">Base Scan: ${h}</option>`).join('');
+                    cSel.innerHTML = '<option value="none">Time Travel Comparison: None</option>' + data.history.map(h => `<option value="${h}">Compare With: ${h}</option>`).join('');
+                    if(selectLatestScanId) pSel.value = selectLatestScanId;
+                    await loadPrimaryScan();
+                }
+            } catch(e) {}
+        }
+
+        async function loadPrimaryScan() {
+            const scanId = document.getElementById('primary-scan').value;
+            if(!scanId) return;
+            const data = await (await fetch(`/api/devices?scan_id=${encodeURIComponent(scanId)}`)).json();
+            if(data.success) {
+                baseDevices = data.devices;
+                document.getElementById('compare-scan').value = "none";
+                calculateNetworkDiff();
+            }
+        }
+
+        async function startScan() {
+            const btn = document.getElementById('scan-btn'), progress = document.getElementById('progress');
+            btn.disabled = true; progress.style.display = "block";
+            try {
+                const data = await (await fetch(`/api/scan?subnet=${encodeURIComponent(document.getElementById('subnet-input').value)}`)).json();
+                if (data.success) await refreshHistoryLists(data.scan_id); 
+                else alert(`Scan failed: ${data.error || "Unknown server error."}`);
+            } catch (error) { alert("Active connection error."); } 
+            finally { btn.disabled = false; progress.style.display = "none"; }
+        }
+
+        function ipToLong(ip) {
+            if (!ip) return 0;
+            const parts = ip.split('.').map(Number);
+            return (parts.length !== 4 || parts.some(isNaN)) ? 0 : (parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3];
+        }
+
+        function calculateNetworkDiff() {
+            const compScanId = document.getElementById('compare-scan').value;
+            let computedDisplayList = [];
+
+            if (compScanId === "none") {
+                computedDisplayList = baseDevices.map(d => ({...d, diff: 'none', old_ip: null}));
+            } else {
+                let baseMap = new Map(baseDevices.map(d => [d.mac, d])), compMap = new Map(compareDevices.map(d => [d.mac, d]));
+                compareDevices.forEach(compDev => {
+                    let baseMatch = baseMap.get(compDev.mac);
+                    if (!baseMatch) computedDisplayList.push({...compDev, diff: 'added'});
+                    else if (baseMatch.ip !== compDev.ip) computedDisplayList.push({...compDev, diff: 'changed', old_ip: baseMatch.ip});
+                    else computedDisplayList.push({...compDev, diff: 'none'});
+                });
+                baseDevices.forEach(baseDev => { if (!compMap.has(baseDev.mac)) computedDisplayList.push({...baseDev, diff: 'missing'}); });
+            }
+
+            const sortBy = document.getElementById('sort-select').value;
+            computedDisplayList.sort((a, b) => {
+                const nameA = (a.custom_name || a.hostname || a.vendor || "").toLowerCase(), nameB = (b.custom_name || b.hostname || b.vendor || "").toLowerCase();
+                switch(sortBy) {
+                    case 'ip': return ipToLong(a.ip) - ipToLong(b.ip);
+                    case 'mac': return (a.mac || "").localeCompare(b.mac || "");
+                    case 'alphabetical': return nameA.localeCompare(nameB);
+                    case 'manufacturer': return (a.vendor || "").localeCompare(b.vendor || "");
+                    case 'detected': return b.status.localeCompare(a.status);
+                    default: return 0;
+                }
+            });
+
+            if (compScanId !== "none" && compareDevices.length === 0) {
+                fetch(`/api/devices?scan_id=${encodeURIComponent(compScanId)}`).then(r => r.json()).then(data => {
+                    if(data.success) { compareDevices = data.devices; calculateNetworkDiff(); }
+                }); return;
+            }
+
+            if (compScanId === "none") compareDevices = [];
+            activeComputedDisplayList = computedDisplayList;
+            
+            document.getElementById('count-total').innerText = computedDisplayList.length;
+            document.getElementById('count-risk').innerText = computedDisplayList.filter(d => d.vulnerabilities && d.vulnerabilities.length > 0).length;
+            renderDevices(computedDisplayList);
+        }
+
+        // =====================================================================
+        // UPDATED: HOSTNAME FALLBACK LOGIC
+        // =====================================================================
+        function renderDevices(displayList) {
+            const list = document.getElementById('device-list');
+            let filteredList = currentFilter === 'vulnerable' ? displayList.filter(d => d.vulnerabilities && d.vulnerabilities.length > 0) : displayList;
+
+            if (filteredList.length === 0) {
+                list.innerHTML = `<div style="grid-column: 1 / -1; color: var(--text-muted); text-align: center; padding: 3rem;">No assets match the current filter.</div>`;
+                return;
+            }
+            
+            let htmlBuffer = "";
+            filteredList.forEach((device) => {
+                let deltaLabel = device.diff === 'added' ? '<span class="lbl-added" style="margin-right:4px;">[+]</span>' : 
+                                 device.diff === 'missing' ? '<span class="lbl-missing" style="margin-right:4px;">[-]</span>' : 
+                                 device.diff === 'changed' ? '<span class="lbl-changed" style="margin-right:4px;">[Δ]</span>' : "";
+                let ipText = device.diff === 'changed' ? `${device.old_ip} ➔ ${device.ip}` : device.ip;
+                
+                let threatBadge = '<span class="badge-flat badge-success">Secure</span>';
+                let vulnList = device.vulnerabilities || [];
+                const rawRisks = vulnList.filter(v => v.severity !== 'INFO').length;
+                if (rawRisks > 0) threatBadge = `<span class="badge-flat badge-danger">⚠️ ${rawRisks} Alert</span>`;
+                else if (vulnList.length > 0) threatBadge = `<span class="badge-flat badge-info">${vulnList.length} Ports</span>`;
+
+                let isSelected = selectedMac === device.mac ? ' selected' : '';
+                
+                // >>> NEW HOSTNAME FALLBACK LOGIC HERE <<<
+                let displayHostname = device.custom_name || device.hostname;
+                if (!displayHostname) {
+                    // Fall back to Vendor, or if Vendor is hidden/randomized, fall back to IP Address
+                    displayHostname = (device.vendor && !device.vendor.includes("Unknown") && !device.vendor.includes("Private")) 
+                        ? device.vendor 
+                        : device.ip.split(',')[0];
+                }
+
+                let displayType = device.device_type || "Generic Endpoint";
+                let displayVendor = device.vendor || "Unknown Vendor";
+                
+                htmlBuffer += `
+                    <div class="device-card diff-${device.diff}${isSelected}" onclick="handleCardClick('${device.mac}')">
+                        <div class="card-header">
+                            <div class="card-icon">${device.icon || '❓'}</div>
+                            <div class="card-title">
+                                <div class="name">${deltaLabel}${displayHostname}</div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem; display: flex; flex-direction: column; gap: 2px;">
+                                    <span style="font-weight: 500;">${displayType}</span>
+                                    <span style="color: var(--text-muted);">${displayVendor}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-details">
+                            <div class="detail-row"><span class="detail-label">IP Address</span> <span class="detail-val">${ipText}</span></div>
+                            <div class="detail-row"><span class="detail-label">MAC Address</span> <span class="detail-val">${device.mac}</span></div>
+                        </div>
+                        <div class="card-footer"><span class="badge-flat">${device.status.toUpperCase()}</span>${threatBadge}</div>
+                    </div>`;
+            });
+            list.innerHTML = htmlBuffer;
+        }
+
+        function handleCardClick(mac) {
+            selectedMac = mac;
+            const device = activeComputedDisplayList.find(d => d.mac === mac);
+            if(device) { renderDevices(activeComputedDisplayList); showSidebar(device); }
+        }
+
+        function showSidebar(device) {
+            document.getElementById('sidebar-right').style.display = "flex";
+            document.body.classList.add('sidebar-open');
+            
+            // Reusing the same fallback logic for the sidebar title
+            let displayHostname = device.custom_name || device.hostname;
+            if (!displayHostname) {
+                displayHostname = (device.vendor && !device.vendor.includes("Unknown") && !device.vendor.includes("Private")) 
+                    ? device.vendor 
+                    : device.ip.split(',')[0];
+            }
+            
+            document.getElementById('diag-title').innerText = displayHostname;
+            document.getElementById('diag-hardware-specs').innerText = `MAC Reference: ${device.mac} | Current IP: ${device.ip}`;
+            document.getElementById('edit-mac').value = device.mac;
+            document.getElementById('edit-name').value = device.custom_name || "";
+            document.getElementById('edit-tags').value = device.tags || "";
+            document.getElementById('edit-icon').value = device.icon_override || "";
+            
+            const reportDiv = document.getElementById('vuln-report-section');
+            reportDiv.innerHTML = ""; 
+
+            if (device.vulnerabilities && device.vulnerabilities.length > 0) {
+                let html = `<h4 style="margin: 1rem 0 4px 0;">🔍 Port & Vulnerability Manifest</h4><table class="flat-table"><thead><tr><th>Target ID</th><th>Insight Summary</th><th>CVSS</th></tr></thead><tbody>`;
+                device.vulnerabilities.forEach(v => {
+                    let badgeCls = v.severity === 'CRITICAL' ? 'sev-crit' : v.severity === 'HIGH' ? 'sev-high' : 'sev-info';
+                    html += `<tr><td><span class="${badgeCls}">${v.id}</span></td><td style="line-height: 1.3;">${v.description}</td><td style="font-weight: bold;">${v.cvss > 0 ? v.cvss : "-"}</td></tr>`;
+                });
+                reportDiv.innerHTML = html + `</tbody></table>`;
+            } else {
+                reportDiv.innerHTML = `<h4 style="color: var(--flat-success);">✓ Hardware Profile Secure</h4><p style="font-size: 0.8rem; color: var(--text-secondary);">No active software threats matching the official CISA weaponized exploit ledger were identified on this device.</p>`;
+            }
+        }
+
+        function closeSidebar() {
+            document.getElementById('sidebar-right').style.display = "none";
+            document.body.classList.remove('sidebar-open');
+            selectedMac = null;
+            renderDevices(activeComputedDisplayList);
+        }
+
+        function saveDeviceDetails() {
+            const mac = document.getElementById('edit-mac').value;
+            fetch(`/api/device/${mac}/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ custom_name: document.getElementById('edit-name').value, tags: document.getElementById('edit-tags').value, icon_override: document.getElementById('edit-icon').value })
+            }).then(res => {
+                if(res.ok) fetch(`/api/devices?scan_id=${encodeURIComponent(document.getElementById('primary-scan').value)}`).then(r => r.json()).then(data => {
+                    if(data.success) { baseDevices = data.devices; calculateNetworkDiff(); }
+                });
+            });
+        }
+
+        function exportCurrentScanMetrics() {
+            if (!activeComputedDisplayList || activeComputedDisplayList.length === 0) return alert("Cannot export an empty matrix layout.");
+            const payload = { meta: { generated_at: new Date().toISOString(), primary_baseline_scan: document.getElementById('primary-scan').value }, topology_assets: activeComputedDisplayList };
+            const a = document.createElement('a');
+            a.href = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload, null, 4));
+            a.download = `secops_audit_log_${document.getElementById('primary-scan').value.replace(/[: ]/g, '_')}.json`;
+            a.click();
+        }
+    </script>
+</body>
+</html>
